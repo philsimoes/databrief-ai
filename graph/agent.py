@@ -124,15 +124,21 @@ JSON com APENAS o que foi explicitamente dito:"""
 
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Campos obrigatórios ainda vazios: {campos_vazios}
+Campo prioritário a preencher agora: {campo_prioritario}
+Outros campos ainda vazios: {outros_campos}
 Contexto da demanda até agora: {contexto}
 
 Regras:
-- Faça UMA pergunta apenas, a mais importante para avançar
-- Priorize: tipo_demanda > objetivo > resultado_esperado > valor_negocio > perguntas_de_negocio
+- Faça UMA pergunta apenas sobre o campo prioritário
 - Seja direto e específico, sem enrolação
 - Use linguagem profissional mas natural
-- Não mencione nomes de campos técnicos como "tipo_demanda" — reformule em linguagem humana
+- Não mencione nomes de campos técnicos — reformule em linguagem humana
+
+Instruções especiais por campo:
+- Se campo for "valor_negocio": pergunte se o impacto é operacional (rotina diária), tático (decisões de médio prazo) ou estratégico (direcionamento do negócio)
+- Se campo for "classificacao_estrategica": apresente as opções e peça para escolher uma ou mais: Priorização, Insight para Decisão, Estruturante, Eficiência Operacional, Monitoramento, Qualidade de Dados, Evolução de Produto, Disponibilização de Informação
+- Se campo for "resultado_esperado": pergunte o que será entregue concretamente (ex: relatório, dashboard, tabela, modelo)
+- Se campo for "tipo_demanda": pergunte se é uma Análise, Estruturante (pipeline/engenharia de dados), Produto de Dados (dashboard/agente) ou Alarmística (monitoramento com alertas)
 
 Pergunta:"""
 
@@ -340,8 +346,13 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     contexto = estado_para_texto(demanda)
     vazios = demanda.pendencias
 
+    # Separa campo prioritário dos demais
+    campo_prioritario = vazios[0] if vazios else ""
+    outros_campos = ", ".join(vazios[1:]) if len(vazios) > 1 else "nenhum"
+
     prompt = PROMPT_PERGUNTA.format(
-        campos_vazios=", ".join(vazios),
+        campo_prioritario=campo_prioritario,
+        outros_campos=outros_campos,
         contexto=contexto
     )
 
