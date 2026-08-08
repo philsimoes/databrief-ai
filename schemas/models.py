@@ -96,29 +96,54 @@ class CamadaRAG(str, Enum):
 
 # ────────────────────────────────────────────────────────────
 # DEPENDÊNCIAS ENTRE TIPOS DE DEMANDA
-# Regra determinística — não inferida pelo LLM.
-# Gold (Estruturante) deve ser resolvida antes de
-# Produto de Dados e Alarmística que dependem dela.
+# Produto de Dados e Alarmística sempre dependem de Estruturante.
+# Análise depende de Estruturante apenas se usar Gold como fonte.
+# A dependência condicional da Análise é resolvida no grafo,
+# não aqui — aqui só definimos a ordem padrão.
 # ────────────────────────────────────────────────────────────
 
 ORDEM_RESOLUCAO: Dict[TipoDemanda, int] = {
     TipoDemanda.ESTRUTURANTE:  0,   # sempre primeiro
-    TipoDemanda.ANALISE:       1,   # sem dependência de Gold
-    TipoDemanda.PRODUTO_DADOS: 2,   # depende de Estruturante
-    TipoDemanda.ALARMASTICA:   2,   # depende de Estruturante
+    TipoDemanda.ANALISE:       1,   # pode ser independente ou dependente
+    TipoDemanda.PRODUTO_DADOS: 2,   # sempre depende de Estruturante
+    TipoDemanda.ALARMASTICA:   2,   # sempre depende de Estruturante
 }
+
+DEPENDE_SEMPRE_DE_ESTRUTURANTE = {
+    TipoDemanda.PRODUTO_DADOS,
+    TipoDemanda.ALARMASTICA,
+}
+
+FONTES_GOLD = {"gold", "Gold", "GOLD"}  # termos que indicam camada Gold
+
+
+def analise_depende_de_gold(demanda: "DemandState") -> bool:
+    """
+    Retorna True se uma demanda do tipo Análise usa Gold como fonte,
+    o que implica dependência de uma demanda Estruturante.
+    """
+    if demanda.campos_analise and demanda.campos_analise.fonte_dados:
+        fonte = str(demanda.campos_analise.fonte_dados.valor)
+        return any(g in fonte for g in FONTES_GOLD)
+    # Se fonte ainda não foi informada, retorna False por padrão
+    # O grafo vai perguntar a fonte antes de decidir
+    return False
 
 
 def ordenar_demandas(demandas: List["DemandState"]) -> List["DemandState"]:
     """
     Ordena uma lista de demandas pela cadeia de dependência técnica.
     Estruturante sempre vem antes de Produto de Dados e Alarmística.
+    Análise que depende de Gold também vem depois do Estruturante.
     """
-    return sorted(
-        demandas,
-        key=lambda d: ORDEM_RESOLUCAO.get(d.tipo_demanda, 99)
-    )
+    def chave(d: "DemandState") -> int:
+        ordem = ORDEM_RESOLUCAO.get(d.tipo_demanda, 99)
+        # Análise dependente de Gold sobe para prioridade 2 (junto com PD e Alarm)
+        if d.tipo_demanda == TipoDemanda.ANALISE and analise_depende_de_gold(d):
+            return 2
+        return ordem
 
+    return sorted(demandas, key=chave)
 
 # ────────────────────────────────────────────────────────────
 # FIELD PROVENANCE
