@@ -98,21 +98,19 @@ class GraphState(TypedDict):
 
 PROMPT_EXTRAIR = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Analise o texto abaixo e extraia APENAS os campos explicitamente mencionados pelo usuário.
-NÃO infira, NÃO suponha, NÃO complete campos que não foram ditos.
-Se um campo não foi mencionado, simplesmente não o inclua no JSON.
+Analise o texto e extraia os campos do briefing em JSON.
 Retorne APENAS o JSON, sem explicações, sem markdown.
 
-Campos possíveis:
-- titulo: string curta descritiva (só se o usuário nomeou a demanda)
-- tipo_demanda: um de ["Análise", "Estruturante", "Produto de Dados", "Alarmística"] (só se mencionado)
-- objetivo: o que se quer alcançar (só se descrito)
-- resultado_esperado: o que será entregue (só se descrito)
-- valor_negocio: um de ["Operacional", "Tático", "Estratégico"] (só se mencionado)
-- classificacao_estrategica: lista — só se o usuário mencionou explicitamente
-- perguntas_de_negocio: lista de perguntas que a demanda responde (só se mencionadas)
-- bloqueios: impedimentos (só se mencionados)
-- link_evidencia: URL (só se fornecida)
+Regras por tipo de campo:
+- titulo, objetivo, resultado_esperado, bloqueios, link_evidencia:
+  extraia APENAS se explicitamente mencionado. Não invente.
+- tipo_demanda: infira se possível. Valores: "Análise", "Estruturante", "Produto de Dados", "Alarmística"
+- valor_negocio: infira pelo contexto. Valores: "Operacional", "Tático", "Estratégico"
+  Dica: decisões de médio prazo ou investimento = Tático; rotina diária = Operacional; direção do negócio = Estratégico
+- classificacao_estrategica: infira pelo contexto. Lista com um ou mais de:
+  ["Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional",
+   "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"]
+- perguntas_de_negocio: extraia APENAS se explicitamente mencionado
 
 Texto do usuário:
 {texto}
@@ -120,7 +118,7 @@ Texto do usuário:
 Estado atual (campos já preenchidos — não repita, não sobrescreva):
 {estado_atual}
 
-JSON com APENAS o que foi explicitamente dito:"""
+JSON:"""
 
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
