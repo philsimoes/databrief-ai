@@ -321,7 +321,6 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                     value=[],
                     height=480,
                     show_label=False,
-                    bubble_full_width=False,
                     type="messages",
                     placeholder=(
                         "**Olá! Sou o DataBrief AI.**\n\n"
