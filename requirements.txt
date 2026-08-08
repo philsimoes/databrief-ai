@@ -1,0 +1,60 @@
+# =============================================================================
+# DataBrief AI — requirements.txt
+# Versões pinadas para reprodutibilidade no Google Colab gratuito (Python 3.10)
+# Última revisão: Ato 1
+# =============================================================================
+
+# ── Orquestração do grafo de agentes ─────────────────────────────────────────
+langgraph==0.2.73           # grafo de estados para o agente conversacional
+langchain-core==0.3.62      # abstrações base usadas pelo LangGraph
+
+# ── Modelos de linguagem (LLM / SLM) ─────────────────────────────────────────
+transformers==4.51.3        # carregamento de Qwen3 e Whisper via HuggingFace
+accelerate==1.6.0           # distribui o modelo entre GPU e RAM automaticamente
+bitsandbytes==0.45.5        # quantização 4-bit (INT4) do Qwen — reduz VRAM de ~14GB para ~3.5GB
+sentencepiece==0.2.0        # tokenizador usado por vários modelos HuggingFace
+
+# ── ASR — Reconhecimento de fala (Ato 2, mas declarado aqui) ─────────────────
+openai-whisper==20240930    # Whisper Small/Tiny para transcrição de áudio
+
+# ── RAG — Recuperação aumentada por corpus (Ato 2) ───────────────────────────
+sentence-transformers==3.4.1  # multilingual-e5-small para embeddings em CPU
+faiss-cpu==1.11.0             # índice vetorial em CPU (não precisa de GPU)
+
+# ── Schemas e validação de dados ─────────────────────────────────────────────
+pydantic==2.11.4            # validação dos schemas centrais (DemandState, etc.)
+
+# ── Interface gráfica ─────────────────────────────────────────────────────────
+gradio==5.29.1              # interface Blocks com abas, painel de estado e áudio
+
+# ── Integração com OpenAI (modo alternativo) ─────────────────────────────────
+openai==1.82.0              # cliente para gpt-4o-mini no modo OPENAI
+
+# ── Utilitários gerais ────────────────────────────────────────────────────────
+torch==2.6.0                # PyTorch — base para todos os modelos (não reinstalar se já presente no Colab)
+numpy==1.26.4               # operações numéricas — pinado para compatibilidade com faiss-cpu
+pandas==2.2.3               # manipulação de dados tabulares (logs, métricas)
+python-dotenv==1.1.0        # leitura de variáveis de ambiente do arquivo .env local
+
+# ── Persistência e I/O ────────────────────────────────────────────────────────
+# google-colab já inclui google-auth e google-drive; não reinstalar
+# Para Drive: usar google.colab.drive.mount() — já disponível no Colab
+
+# ── TTS — Síntese de voz pt-BR (Ato 2) ──────────────────────────────────────
+# Piper TTS é instalado via binário separado (não via pip)
+# Instruções de instalação estão no Bloco 03 do Ato 2
+
+# ── Avaliação e métricas (Ato 3) ─────────────────────────────────────────────
+scikit-learn==1.6.1         # F1, precision, recall para avaliação dos campos
+
+# =============================================================================
+# NOTAS DE INSTALAÇÃO NO COLAB
+# =============================================================================
+# Instalar com:
+#   !pip install -q -r requirements.txt
+#
+# torch já vem pré-instalado no Colab — se a versão acima conflitar, use:
+#   !pip install -q -r requirements.txt --ignore-installed torch
+#
+# bitsandbytes requer CUDA — em modo CPU_LOCAL, não é usado.
+# =============================================================================
