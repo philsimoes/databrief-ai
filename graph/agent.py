@@ -1,5 +1,7 @@
 # ============================================================
-# Célula 4: Grafo LangGraph — graph/agent.py
+# graph/agent.py
+# DataBrief AI — Bloco 02: Grafo LangGraph
+# Módulo autossuficiente — não depende de variáveis do notebook
 # ============================================================
 
 # Correção de compatibilidade langchain/langchain-core
@@ -13,13 +15,73 @@ from langgraph.graph import StateGraph, END
 from schemas.models import (
     DemandState, SessionState, TurnInput, FieldProvenance,
     TipoDemanda, OrigemCampo, TipoInput, ReadinessStatus,
-    ModoExecucao, BriefingOutput
+    ModoExecucao, BriefingOutput, ValorNegocio, ClassificacaoEstrategica,
+    DEPENDE_SEMPRE_DE_ESTRUTURANTE, analise_depende_de_gold, ordenar_demandas
 )
 
 # ────────────────────────────────────────────────────────────
+# REFERÊNCIAS GLOBAIS AO MODELO
+# Preenchidas por inicializar_modelo() antes de usar o grafo
+# ────────────────────────────────────────────────────────────
+
+_model = None
+_tokenizer = None
+
+
+def inicializar_modelo(model, tokenizer):
+    """
+    Recebe o model e tokenizer carregados no notebook e os
+    armazena para uso nos nós do grafo.
+    Chamar uma vez após carregar o Qwen na Célula 2.
+    """
+    global _model, _tokenizer
+    _model = model
+    _tokenizer = tokenizer
+    print("✅ Modelo registrado no grafo")
+
+
+# ────────────────────────────────────────────────────────────
+# CHAMADA AO MODELO
+# ────────────────────────────────────────────────────────────
+
+def chamar_qwen(prompt: str, max_tokens: int = 512) -> tuple:
+    """Chama o Qwen com um prompt e retorna (resposta, latência)."""
+    import torch
+
+    if _model is None or _tokenizer is None:
+        raise RuntimeError(
+            "Modelo não inicializado. Chame inicializar_modelo(model, tokenizer) primeiro."
+        )
+
+    mensagens = [{"role": "user", "content": prompt}]
+    texto = _tokenizer.apply_chat_template(
+        mensagens,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    inputs = _tokenizer(texto, return_tensors="pt").to(_model.device)
+
+    t0 = time.time()
+    with torch.no_grad():
+        outputs = _model.generate(
+            **inputs,
+            max_new_tokens=max_tokens,
+            temperature=0.1,
+            do_sample=True,
+            pad_token_id=_tokenizer.eos_token_id,
+        )
+    latencia = time.time() - t0
+
+    resposta = _tokenizer.decode(
+        outputs[0][inputs["input_ids"].shape[1]:],
+        skip_special_tokens=True
+    )
+    return resposta.strip(), latencia
+
+
+# ────────────────────────────────────────────────────────────
 # ESTADO DO GRAFO
-# TypedDict é o formato que o LangGraph usa para passar
-# informações entre os nós.
 # ────────────────────────────────────────────────────────────
 
 class GraphState(TypedDict):
@@ -92,12 +154,10 @@ Resumo e briefing formatado:"""
 def extrair_json(texto: str) -> dict:
     """Extrai JSON da resposta do modelo com fallback para regex."""
     texto = texto.strip()
-    # Tenta parse direto
     try:
         return json.loads(texto)
     except json.JSONDecodeError:
         pass
-    # Tenta extrair bloco JSON com regex
     match = re.search(r'\{.*\}', texto, re.DOTALL)
     if match:
         try:
@@ -140,6 +200,12 @@ def estado_para_texto(demanda: DemandState) -> str:
         linhas.append(f"titulo: {demanda.titulo.valor}")
     if demanda.valor_negocio:
         linhas.append(f"valor_negocio: {demanda.valor_negocio.value}")
+    if demanda.classificacao_estrategica:
+        vals = [c.value for c in demanda.classificacao_estrategica]
+        linhas.append(f"classificacao_estrategica: {vals}")
+    if demanda.perguntas_de_negocio:
+        perguntas = [fp.valor for fp in demanda.perguntas_de_negocio]
+        linhas.append(f"perguntas_de_negocio: {perguntas}")
     return "\n".join(linhas) if linhas else "Nenhum campo preenchido ainda."
 
 
@@ -149,47 +215,41 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int) -> DemandSta
     def fp(valor):
         return FieldProvenance(valor=valor, origem=OrigemCampo.TEXT, turno=turno)
 
-    if "titulo" in dados and dados["titulo"] and not demanda.titulo:
+    if dados.get("titulo") and not demanda.titulo:
         demanda.titulo = fp(dados["titulo"])
-
-    if "objetivo" in dados and dados["objetivo"] and not demanda.objetivo:
+    if dados.get("objetivo") and not demanda.objetivo:
         demanda.objetivo = fp(dados["objetivo"])
-
-    if "resultado_esperado" in dados and dados["resultado_esperado"] and not demanda.resultado_esperado:
+    if dados.get("resultado_esperado") and not demanda.resultado_esperado:
         demanda.resultado_esperado = fp(dados["resultado_esperado"])
-
-    if "bloqueios" in dados and dados["bloqueios"] and not demanda.bloqueios:
+    if dados.get("bloqueios") and not demanda.bloqueios:
         demanda.bloqueios = fp(dados["bloqueios"])
-
-    if "link_evidencia" in dados and dados["link_evidencia"] and not demanda.link_evidencia:
+    if dados.get("link_evidencia") and not demanda.link_evidencia:
         demanda.link_evidencia = fp(dados["link_evidencia"])
 
-    if "tipo_demanda" in dados and not demanda.tipo_demanda:
+    if dados.get("tipo_demanda") and not demanda.tipo_demanda:
         try:
             demanda.tipo_demanda = TipoDemanda(dados["tipo_demanda"])
         except ValueError:
             pass
 
-    if "valor_negocio" in dados and not demanda.valor_negocio:
-        from schemas.models import ValorNegocio
+    if dados.get("valor_negocio") and not demanda.valor_negocio:
         try:
             demanda.valor_negocio = ValorNegocio(dados["valor_negocio"])
         except ValueError:
             pass
 
-    if "classificacao_estrategica" in dados and not demanda.classificacao_estrategica:
-        from schemas.models import ClassificacaoEstrategica
+    if dados.get("classificacao_estrategica") and not demanda.classificacao_estrategica:
         classificacoes = []
-        for c in (dados["classificacao_estrategica"] or []):
+        for c in dados["classificacao_estrategica"]:
             try:
                 classificacoes.append(ClassificacaoEstrategica(c))
             except ValueError:
                 pass
         demanda.classificacao_estrategica = classificacoes
 
-    if "perguntas_de_negocio" in dados and not demanda.perguntas_de_negocio:
+    if dados.get("perguntas_de_negocio") and not demanda.perguntas_de_negocio:
         demanda.perguntas_de_negocio = [
-            fp(p) for p in (dados["perguntas_de_negocio"] or []) if p
+            fp(p) for p in dados["perguntas_de_negocio"] if p
         ]
 
     return demanda
@@ -200,10 +260,6 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int) -> DemandSta
 # ────────────────────────────────────────────────────────────
 
 def no_extrair_campos(state: GraphState) -> GraphState:
-    """
-    Nó 1: Extrai campos do último turno do usuário.
-    Chama o Qwen com o texto e o estado atual.
-    """
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
 
@@ -232,18 +288,6 @@ def no_extrair_campos(state: GraphState) -> GraphState:
 
 
 def no_avaliar_completude(state: GraphState) -> GraphState:
-    """
-    Nó 2: Avalia completude e detecta dependências entre demandas.
-    - Produto de Dados e Alarmística sempre precisam de Estruturante.
-    - Análise precisa de Estruturante só se usar Gold como fonte.
-    Se a dependência não existe na sessão, cria a demanda Estruturante
-    automaticamente e reordena a fila.
-    """
-    from schemas.models import (
-        DEPENDE_SEMPRE_DE_ESTRUTURANTE, analise_depende_de_gold,
-        ordenar_demandas
-    )
-
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
 
@@ -255,13 +299,11 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
     )
 
     if precisa_estruturante:
-        # Verificar se já existe Estruturante na sessão
         tem_estruturante = any(
             d.tipo_demanda == TipoDemanda.ESTRUTURANTE
             for d in sessao.demandas
         )
         if not tem_estruturante:
-            # Criar demanda Estruturante automaticamente
             nova = DemandState(
                 tipo_demanda=TipoDemanda.ESTRUTURANTE,
                 sessao_id=sessao.sessao_id
@@ -269,7 +311,6 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
             demanda.demandas_derivadas_ids.append(nova.id_demanda)
             sessao.demandas.append(nova)
             sessao.demandas = ordenar_demandas(sessao.demandas)
-            # Reposicionar no índice do Estruturante (sempre índice 0)
             sessao.indice_ativo = 0
             state["sessao"] = sessao
             state["ultima_resposta_agente"] = (
@@ -279,9 +320,7 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
             )
             return state
 
-    # Sem dependência pendente — avaliar campos normalmente
     vazios = campos_vazios(demanda)
-
     if not vazios:
         demanda.readiness = ReadinessStatus.PRONTA
         demanda.pendencias = []
@@ -295,10 +334,6 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
 
 
 def no_formular_pergunta(state: GraphState) -> GraphState:
-    """
-    Nó 3: Formula a próxima pergunta para o usuário.
-    Sempre uma pergunta por vez, priorizando campos bloqueantes.
-    """
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
 
@@ -316,17 +351,12 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
 
     demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
     sessao.demandas[sessao.indice_ativo] = demanda
-
     state["sessao"] = sessao
     state["ultima_resposta_agente"] = pergunta.strip()
     return state
 
 
 def no_gerar_briefing(state: GraphState) -> GraphState:
-    """
-    Nó 4: Gera o briefing final quando todos os campos estão preenchidos.
-    Aguarda aprovação humana antes de liberar.
-    """
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
 
@@ -338,8 +368,6 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     latencia = time.time() - t0
 
     demanda.log_latencias[f"briefing_turno_{demanda.turno_atual}"] = latencia
-
-    # Gera o BriefingOutput estruturado
     briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao)
 
     sessao.demandas[sessao.indice_ativo] = demanda
@@ -355,42 +383,32 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
 
 
 # ────────────────────────────────────────────────────────────
-# ROTEADOR — decide para onde ir após avaliar_completude
+# ROTEADOR
 # ────────────────────────────────────────────────────────────
 
 def rotear_apos_avaliacao(state: GraphState) -> str:
-    """
-    Decide o próximo nó com base no readiness da demanda ativa.
-    Nunca faz fallback silencioso — sempre retorna um destino explícito.
-    """
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
-
     if demanda.readiness == ReadinessStatus.PRONTA:
         return "gerar_briefing"
-    else:
-        return "formular_pergunta"
+    return "formular_pergunta"
 
 
 # ────────────────────────────────────────────────────────────
 # CONSTRUÇÃO DO GRAFO
 # ────────────────────────────────────────────────────────────
 
-def construir_grafo() -> StateGraph:
+def construir_grafo():
     grafo = StateGraph(GraphState)
-
-    # Adicionar nós
-    grafo.add_node("extrair_campos",    no_extrair_campos)
+    grafo.add_node("extrair_campos",     no_extrair_campos)
     grafo.add_node("avaliar_completude", no_avaliar_completude)
-    grafo.add_node("formular_pergunta", no_formular_pergunta)
-    grafo.add_node("gerar_briefing",    no_gerar_briefing)
+    grafo.add_node("formular_pergunta",  no_formular_pergunta)
+    grafo.add_node("gerar_briefing",     no_gerar_briefing)
 
-    # Adicionar arestas fixas
     grafo.add_edge("extrair_campos",    "avaliar_completude")
     grafo.add_edge("formular_pergunta", END)
     grafo.add_edge("gerar_briefing",    END)
 
-    # Aresta condicional após avaliação
     grafo.add_conditional_edges(
         "avaliar_completude",
         rotear_apos_avaliacao,
@@ -400,13 +418,36 @@ def construir_grafo() -> StateGraph:
         }
     )
 
-    # Ponto de entrada
     grafo.set_entry_point("extrair_campos")
-
     return grafo.compile()
 
 
-# Compilar o grafo
-agente = construir_grafo()
-print("✅ Grafo LangGraph compilado com sucesso")
-print(f"   Nós: {list(agente.get_graph().nodes.keys())}")
+# ────────────────────────────────────────────────────────────
+# FUNÇÃO DE PROCESSAMENTO DE TURNO
+# Exportada para uso direto no notebook e no Gradio
+# ────────────────────────────────────────────────────────────
+
+def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
+    """
+    Processa um turno completo: registra input, roda o grafo, retorna resposta.
+    Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None)
+    """
+    demanda = sessao.demanda_ativa
+    turno = TurnInput(conteudo=texto_usuario, tipo=TipoInput.TEXT)
+    demanda.registrar_turno(turno)
+    sessao.demandas[sessao.indice_ativo] = demanda
+
+    state = {
+        "sessao": sessao,
+        "ultima_resposta_agente": "",
+        "briefing_gerado": None,
+        "aguardando_aprovacao": False,
+        "erro": None,
+    }
+
+    resultado = agente.invoke(state)
+    return (
+        resultado["sessao"],
+        resultado["ultima_resposta_agente"],
+        resultado["briefing_gerado"],
+    )
