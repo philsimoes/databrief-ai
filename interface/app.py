@@ -310,25 +310,25 @@ def construir_interface(agente_compilado) -> gr.Blocks:
 
         gr.HTML("<hr style='margin:8px 0; border:none; border-top:1px solid #e5e7eb;'>")
 
-        # ── Split screen ─────────────────────────────────────
+# ── Split screen ─────────────────────────────────────
         with gr.Row(equal_height=True):
 
             # Esquerda — Chat
             with gr.Column(scale=1):
                 gr.Markdown("### 💬 Conversa")
 
-            chatbot = gr.Chatbot(
-                value=[],
-                height=480,
-                show_label=False,
-                layout="bubble",
-                placeholder=(
-                    "**Olá! Sou o DataBrief AI.**\n\n"
-                    "Descreva sua demanda de dados e vou ajudar a "
-                    "estruturá-la em um briefing completo.\n\n"
-                    "*Exemplo: \"Preciso de um dashboard de matrículas por polo\"*"
-                ),
-            )
+                chatbot = gr.Chatbot(
+                    value=[],
+                    height=480,
+                    show_label=False,
+                    layout="bubble",
+                    placeholder=(
+                        "**Olá! Sou o DataBrief AI.**\n\n"
+                        "Descreva sua demanda de dados e vou ajudar a "
+                        "estruturá-la em um briefing completo.\n\n"
+                        "*Exemplo: \"Preciso de um dashboard de matrículas por polo\"*"
+                    ),
+                )
 
                 msg_input = gr.Textbox(
                     placeholder="Descreva sua demanda...",
