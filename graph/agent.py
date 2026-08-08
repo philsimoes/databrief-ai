@@ -36,27 +36,29 @@ class GraphState(TypedDict):
 
 PROMPT_EXTRAIR = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Analise o texto abaixo e extraia os campos do briefing em JSON.
-Retorne APENAS o JSON, sem explicações, sem markdown, sem texto antes ou depois.
+Analise o texto abaixo e extraia APENAS os campos explicitamente mencionados pelo usuário.
+NÃO infira, NÃO suponha, NÃO complete campos que não foram ditos.
+Se um campo não foi mencionado, simplesmente não o inclua no JSON.
+Retorne APENAS o JSON, sem explicações, sem markdown.
 
 Campos possíveis:
-- titulo: string curta descritiva
-- tipo_demanda: um de ["Análise", "Estruturante", "Produto de Dados", "Alarmística"]
-- objetivo: o que se quer alcançar
-- resultado_esperado: o que será entregue
-- valor_negocio: um de ["Operacional", "Tático", "Estratégico"]
-- classificacao_estrategica: lista com um ou mais de ["Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional", "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"]
-- perguntas_de_negocio: lista de perguntas que a demanda responde
-- bloqueios: impedimentos conhecidos
-- link_evidencia: URL se houver
+- titulo: string curta descritiva (só se o usuário nomeou a demanda)
+- tipo_demanda: um de ["Análise", "Estruturante", "Produto de Dados", "Alarmística"] (só se mencionado)
+- objetivo: o que se quer alcançar (só se descrito)
+- resultado_esperado: o que será entregue (só se descrito)
+- valor_negocio: um de ["Operacional", "Tático", "Estratégico"] (só se mencionado)
+- classificacao_estrategica: lista — só se o usuário mencionou explicitamente
+- perguntas_de_negocio: lista de perguntas que a demanda responde (só se mencionadas)
+- bloqueios: impedimentos (só se mencionados)
+- link_evidencia: URL (só se fornecida)
 
 Texto do usuário:
 {texto}
 
-Estado atual (campos já preenchidos):
+Estado atual (campos já preenchidos — não repita, não sobrescreva):
 {estado_atual}
 
-JSON extraído:"""
+JSON com APENAS o que foi explicitamente dito:"""
 
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
