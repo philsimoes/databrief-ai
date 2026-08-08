@@ -231,12 +231,53 @@ def no_extrair_campos(state: GraphState) -> GraphState:
 
 def no_avaliar_completude(state: GraphState) -> GraphState:
     """
-    Nó 2: Avalia se todos os campos obrigatórios estão preenchidos.
-    Atualiza o readiness status da demanda.
+    Nó 2: Avalia completude e detecta dependências entre demandas.
+    - Produto de Dados e Alarmística sempre precisam de Estruturante.
+    - Análise precisa de Estruturante só se usar Gold como fonte.
+    Se a dependência não existe na sessão, cria a demanda Estruturante
+    automaticamente e reordena a fila.
     """
+    from schemas.models import (
+        DEPENDE_SEMPRE_DE_ESTRUTURANTE, analise_depende_de_gold,
+        ordenar_demandas
+    )
+
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
 
+    # Verificar dependência de Estruturante
+    precisa_estruturante = (
+        demanda.tipo_demanda in DEPENDE_SEMPRE_DE_ESTRUTURANTE
+        or (demanda.tipo_demanda == TipoDemanda.ANALISE
+            and analise_depende_de_gold(demanda))
+    )
+
+    if precisa_estruturante:
+        # Verificar se já existe Estruturante na sessão
+        tem_estruturante = any(
+            d.tipo_demanda == TipoDemanda.ESTRUTURANTE
+            for d in sessao.demandas
+        )
+        if not tem_estruturante:
+            # Criar demanda Estruturante automaticamente
+            nova = DemandState(
+                tipo_demanda=TipoDemanda.ESTRUTURANTE,
+                sessao_id=sessao.sessao_id
+            )
+            demanda.demandas_derivadas_ids.append(nova.id_demanda)
+            sessao.demandas.append(nova)
+            sessao.demandas = ordenar_demandas(sessao.demandas)
+            # Reposicionar no índice do Estruturante (sempre índice 0)
+            sessao.indice_ativo = 0
+            state["sessao"] = sessao
+            state["ultima_resposta_agente"] = (
+                "Percebi que essa demanda depende de uma tabela Gold que ainda "
+                "não existe. Vou abrir uma demanda Estruturante primeiro. "
+                "Me conta: qual tabela Gold precisamos construir?"
+            )
+            return state
+
+    # Sem dependência pendente — avaliar campos normalmente
     vazios = campos_vazios(demanda)
 
     if not vazios:
