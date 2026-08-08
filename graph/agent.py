@@ -102,8 +102,10 @@ Analise o texto e extraia os campos do briefing em JSON.
 Retorne APENAS o JSON, sem explicações, sem markdown.
 
 Regras por tipo de campo:
-- titulo, objetivo, resultado_esperado, bloqueios, link_evidencia:
+- titulo, bloqueios, link_evidencia:
   extraia APENAS se explicitamente mencionado. Não invente.
+- objetivo: extraia ou infira do contexto geral da demanda
+- resultado_esperado: extraia APENAS se o usuário descreveu o que será entregue
 - tipo_demanda: infira se possível. Valores: "Análise", "Estruturante", "Produto de Dados", "Alarmística"
 - valor_negocio: infira pelo contexto. Valores: "Operacional", "Tático", "Estratégico"
   Dica: decisões de médio prazo ou investimento = Tático; rotina diária = Operacional; direção do negócio = Estratégico
