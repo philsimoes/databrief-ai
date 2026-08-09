@@ -19,6 +19,15 @@ from graph.agent import processar_turno, processar_selecao_checkbox
 
 OPCOES_CLASSIFICACAO = [c.value for c in ClassificacaoEstrategica]
 
+OPCOES_RESULTADO = [
+    "Dashboard interativo",
+    "Agente automatizado",
+    "Pipeline de dados",
+    "Tabela Gold",
+    "Modelo analítico",
+    "Outro",
+]
+
 # ────────────────────────────────────────────────────────────
 # ESTADO GLOBAL DA SESSÃO
 # ────────────────────────────────────────────────────────────
@@ -205,8 +214,8 @@ def responder(mensagem, historico, sessao_state, modo_str):
     pronto        = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
     briefing_html = renderizar_briefing_final(sessao) if pronto else ""
 
-    # Exibe CheckboxGroup apenas quando o campo prioritário for classificacao_estrategica
     pede_classificacao = campo_atual == "classificacao_estrategica"
+    pede_resultado      = campo_atual == "resultado_esperado"
 
     return (
         historico,
@@ -217,7 +226,9 @@ def responder(mensagem, historico, sessao_state, modo_str):
         gr.update(visible=pronto),              # btn_aprovar
         gr.update(visible=False),               # arquivo_download (reseta)
         gr.update(visible=pede_classificacao),  # secao_checkbox
-        gr.update(value=[]),                    # checkbox_classificacao (limpa seleção anterior)
+        gr.update(value=[]),                    # checkbox_classificacao (limpa)
+        gr.update(visible=pede_resultado),      # secao_radio_resultado
+        gr.update(value=None),                  # radio_resultado (limpa)
     )
 
 
@@ -255,6 +266,46 @@ def confirmar_classificacao(selecoes, sessao_state, historico):
         gr.update(visible=pronto),              # secao_briefing
         gr.update(visible=pronto),              # btn_aprovar
         renderizar_barra_progresso(sessao),     # barra atualizada
+    )
+
+
+def confirmar_resultado(selecao, sessao_state, historico):
+    """Chamada quando o usuário confirma o Radio de resultado_esperado.
+    Aplica o valor direto ao estado e avança o grafo.
+    """
+    if not selecao or not sessao_state:
+        return (historico, sessao_state, gr.update(visible=False), "",
+                gr.update(visible=False), gr.update(visible=False),
+                _barra_html(0, "Aguardando demanda"))
+
+    from schemas.models import FieldProvenance, OrigemCampo
+    sessao = SessionState.model_validate(sessao_state)
+    demanda = sessao.demanda_ativa
+
+    demanda.resultado_esperado = FieldProvenance(
+        valor=selecao,
+        origem=OrigemCampo.MANUAL,
+        turno=demanda.turno_atual,
+    )
+    sessao.demandas[sessao.indice_ativo] = demanda
+
+    historico = historico or []
+    historico.append({"role": "user", "content": f"Resultado esperado: {selecao}"})
+
+    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, "__radio__")
+    historico.append({"role": "assistant", "content": resposta})
+
+    pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
+    briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
+
+    return (
+        historico,
+        sessao.model_dump(mode="json"),
+        gr.update(visible=False),
+        briefing_html_val,
+        gr.update(visible=pronto),
+        gr.update(visible=pronto),
+        renderizar_barra_progresso(sessao),
     )
 
 
@@ -354,6 +405,17 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                     "Confirmar seleção", variant="primary", size="sm"
                 )
 
+            with gr.Column(visible=False) as secao_radio_resultado:
+                gr.Markdown("**Como essa demanda será entregue?**")
+                radio_resultado = gr.Radio(
+                    choices=OPCOES_RESULTADO,
+                    label="",
+                    show_label=False,
+                )
+                btn_confirmar_resultado = gr.Button(
+                    "Confirmar", variant="primary", size="sm"
+                )
+
             msg_input = gr.Textbox(
                 placeholder="Descreva sua demanda...",
                 show_label=False, lines=1, max_lines=4, submit_btn=True,
@@ -380,6 +442,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
+                secao_radio_resultado, radio_resultado,
             ],
         ).then(fn=lambda: "", outputs=msg_input)
 
@@ -389,6 +452,18 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[
                 chatbot, sessao_state,
                 secao_checkbox, secao_checkbox,   # esconde e controla reexibição
+                briefing_html,
+                secao_briefing, btn_aprovar,
+                barra_progresso,
+            ],
+        )
+
+        btn_confirmar_resultado.click(
+            fn=confirmar_resultado,
+            inputs=[radio_resultado, sessao_state, chatbot],
+            outputs=[
+                chatbot, sessao_state,
+                secao_radio_resultado,
                 briefing_html,
                 secao_briefing, btn_aprovar,
                 barra_progresso,
