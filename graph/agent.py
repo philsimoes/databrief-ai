@@ -134,8 +134,9 @@ Campo prioritário a preencher agora: {campo_prioritario}
 Outros campos ainda vazios: {outros_campos}
 Contexto da demanda até agora: {contexto}
 
-Regras:
-- Faça UMA pergunta apenas sobre o campo prioritário
+Regras OBRIGATÓRIAS:
+- Faça UMA pergunta apenas sobre o campo "{campo_prioritario}" — nunca sobre outro campo
+- NUNCA pergunte sobre campos que já estão no contexto como preenchidos
 - Seja direto e específico, sem enrolação
 - Use linguagem profissional mas natural
 - Não mencione nomes de campos técnicos — reformule em linguagem humana
