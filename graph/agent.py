@@ -534,12 +534,13 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
     sessao_resultado = resultado["sessao"]
     sessao_resultado.ultima_pergunta_agente = resultado["ultima_resposta_agente"]
 
-    # Detecta campo prioritário diretamente das pendências — mais confiável
-    # que depender do estado do LangGraph, que pode descartar chaves entre nós
+    # Recalcula campos_vazios na saída — não confia em demanda.pendencias
+    # porque o LangGraph zera listas durante serialização entre nós
     demanda_resultado = sessao_resultado.demanda_ativa
     campo_prioritario = ""
-    if demanda_resultado and demanda_resultado.pendencias:
-        campo_prioritario = demanda_resultado.pendencias[0]
+    if demanda_resultado and demanda_resultado.readiness != ReadinessStatus.PRONTA:
+        vazios_agora = campos_vazios(demanda_resultado)
+        campo_prioritario = vazios_agora[0] if vazios_agora else ""
 
     return (
         sessao_resultado,
