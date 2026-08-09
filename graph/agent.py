@@ -318,7 +318,8 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
                 classificacoes.append(ClassificacaoEstrategica(c))
             except ValueError:
                 pass
-        demanda.classificacao_estrategica = classificacoes
+        # Limita a 3 classificações — mais que isso indica inferência imprecisa do Qwen
+        demanda.classificacao_estrategica = classificacoes[:3]
 
     if dados.get("perguntas_de_negocio") and not demanda.perguntas_de_negocio:
         demanda.perguntas_de_negocio = [
