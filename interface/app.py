@@ -107,12 +107,12 @@ def _bloco_briefing(demanda) -> str:
                 "AUDIO": "#f59e0b", "RAG": "#22c55e",
                 "ATTACHMENT": "#f97316", "MANUAL": "#6b7280",
             }.get(origem, "#9ca3af")
-            label = LABEL_ORIGEM.get(origem, origem.lower())
+            label_origem = LABEL_ORIGEM.get(origem, origem.lower())
             turno_txt = f" · msg {turno}" if turno is not None else ""
             origem_badge = (
                 f'<span style="font-size:10px;background:{cor_origem}18;color:{cor_origem};'
                 f'border:1px solid {cor_origem}44;padding:1px 7px;border-radius:99px;'
-                f'margin-left:6px;vertical-align:middle;">{label}{turno_txt}</span>'
+                f'margin-left:6px;vertical-align:middle;">{label_origem}{turno_txt}</span>'
             )
         return f"""
         <div style="display:flex;gap:12px;padding:10px 0;
