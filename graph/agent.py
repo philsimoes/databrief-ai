@@ -365,9 +365,15 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
                 sessao_id=sessao.sessao_id
             )
             demanda.demandas_derivadas_ids.append(nova.id_demanda)
+            # Salva demanda original com campos extraídos ANTES de reordenar
+            sessao.demandas[sessao.indice_ativo] = demanda
             sessao.demandas.append(nova)
             sessao.demandas = ordenar_demandas(sessao.demandas)
-            sessao.indice_ativo = 0
+            # Aponta para a Estruturante (sempre na posição 0 após ordenação)
+            sessao.indice_ativo = next(
+                i for i, d in enumerate(sessao.demandas)
+                if d.tipo_demanda == TipoDemanda.ESTRUTURANTE
+            )
             state["sessao"] = sessao
             state["ultima_resposta_agente"] = (
                 "Percebi que essa demanda depende de uma tabela Gold que ainda "
