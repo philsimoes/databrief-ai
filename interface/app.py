@@ -203,10 +203,15 @@ def processar_resposta(historico, sessao_state, modo_str):
               gr.update(value=[]), gr.update(visible=False), gr.update(value=None))
     if not historico:
         return _vazio
-    mensagem = next(
+    mensagem_raw = next(
         (m["content"] for m in reversed(historico) if m["role"] == "user"), ""
     )
-    if not mensagem:
+    # Gradio 6.x pode retornar content como lista de blocos
+    if isinstance(mensagem_raw, list):
+        mensagem = " ".join(b.get("text", "") for b in mensagem_raw if isinstance(b, dict))
+    else:
+        mensagem = str(mensagem_raw)
+    if not mensagem.strip():
         return _vazio
 
     sessao = SessionState.model_validate(sessao_state) if sessao_state else nova_sessao()
