@@ -142,7 +142,12 @@ Regras:
 Instruções especiais por campo:
 - Se campo for "valor_negocio": pergunte se o impacto é operacional (rotina diária), tático (decisões de médio prazo) ou estratégico (direcionamento do negócio)
 - Se campo for "classificacao_estrategica": apresente as opções e peça para escolher uma ou mais: Priorização, Insight para Decisão, Estruturante, Eficiência Operacional, Monitoramento, Qualidade de Dados, Evolução de Produto, Disponibilização de Informação
-- Se campo for "resultado_esperado": pergunte o que será entregue concretamente (ex: relatório, dashboard, tabela, modelo)
+- Se campo for "resultado_esperado": pergunte qual será o formato de entrega técnica.
+  Nunca repita o vocabulário usado pelo usuário como exemplo — reformule sempre.
+  Opções a apresentar: dashboard interativo, relatório automatizado via agente,
+  pipeline de dados, tabela Gold, modelo analítico.
+  Exemplo de pergunta boa: "Como isso será entregue — um dashboard no Power BI,
+  um relatório gerado automaticamente por um agente, ou outro formato?"
 - Se campo for "tipo_demanda": pergunte se é uma Análise, Estruturante (pipeline/engenharia de dados), Produto de Dados (dashboard/agente) ou Alarmística (monitoramento com alertas)
 
 Pergunta:"""
