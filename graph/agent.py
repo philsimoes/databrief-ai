@@ -348,39 +348,13 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
         )
 
     # Verificar dependência de Estruturante
-    precisa_estruturante = (
-        demanda.tipo_demanda in DEPENDE_SEMPRE_DE_ESTRUTURANTE
-        or (demanda.tipo_demanda == TipoDemanda.ANALISE
-            and analise_depende_de_gold(demanda))
-    )
-
-    if precisa_estruturante:
-        tem_estruturante = any(
-            d.tipo_demanda == TipoDemanda.ESTRUTURANTE
-            for d in sessao.demandas
-        )
-        if not tem_estruturante:
-            nova = DemandState(
-                tipo_demanda=TipoDemanda.ESTRUTURANTE,
-                sessao_id=sessao.sessao_id
-            )
-            demanda.demandas_derivadas_ids.append(nova.id_demanda)
-            # Salva demanda original com campos extraídos ANTES de reordenar
-            sessao.demandas[sessao.indice_ativo] = demanda
-            sessao.demandas.append(nova)
-            sessao.demandas = ordenar_demandas(sessao.demandas)
-            # Aponta para a Estruturante (sempre na posição 0 após ordenação)
-            sessao.indice_ativo = next(
-                i for i, d in enumerate(sessao.demandas)
-                if d.tipo_demanda == TipoDemanda.ESTRUTURANTE
-            )
-            state["sessao"] = sessao
-            state["ultima_resposta_agente"] = (
-                "Percebi que essa demanda depende de uma tabela Gold que ainda "
-                "não existe. Vou abrir uma demanda Estruturante primeiro. "
-                "Me conta: qual tabela Gold precisamos construir?"
-            )
-            return state
+    # DESATIVADO no Ato 1 — fluxo multi-demanda será trabalhado no Ato 2
+    # A lógica está preservada abaixo, comentada, para reativar no Ato 2
+    # precisa_estruturante = (
+    #     demanda.tipo_demanda in DEPENDE_SEMPRE_DE_ESTRUTURANTE
+    #     or (demanda.tipo_demanda == TipoDemanda.ANALISE
+    #         and analise_depende_de_gold(demanda))
+    # )
 
     vazios = campos_vazios(demanda)
     if not vazios:
