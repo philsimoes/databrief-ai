@@ -147,7 +147,7 @@ Regras:
 - Não mencione nomes de campos técnicos — reformule em linguagem humana
 
 Instruções especiais por campo:
-- Se campo for "valor_negocio": pergunte qual o nível de impacto da demanda no negócio, sem listar as opções — deixe o usuário responder livremente
+- Se campo for "valor_negocio": pergunte "Essa demanda vai apoiar decisões do dia a dia, decisões de médio prazo ou o direcionamento estratégico do negócio?" — use essa pergunta exatamente, sem variações
 - Se campo for "classificacao_estrategica": apresente as opções e peça para escolher uma ou mais: Priorização, Insight para Decisão, Estruturante, Eficiência Operacional, Monitoramento, Qualidade de Dados, Evolução de Produto, Disponibilização de Informação
 - Se campo for "resultado_esperado": pergunte qual será o formato de entrega técnica.
   PROIBIDO mencionar qualquer palavra que o usuário usou (ex: "relatório", "análise", "dashboard").
