@@ -107,8 +107,11 @@ Contexto importante:
 - A resposta do usuário deve ser interpretada como resposta a essa pergunta.
   Use isso para associar o conteúdo ao campo correto.
 - Se a resposta for curta (1-3 palavras), interprete-a como resposta direta
-  ao campo que estava sendo perguntado. Ex: se a pergunta era sobre formato
-  de entrega e o usuário respondeu "Um dashboard", extraia resultado_esperado = "dashboard interativo".
+  ao campo que estava sendo perguntado. Exemplos:
+  * pergunta sobre formato de entrega + resposta "Dashboard" ou "Um dashboard" → resultado_esperado = "dashboard interativo"
+  * pergunta sobre formato de entrega + resposta "Agente" → resultado_esperado = "agente automatizado"
+  * pergunta sobre impacto + resposta "Estratégico" → valor_negocio = "Estratégico"
+  * pergunta sobre título + resposta curta → titulo = (resposta exata do usuário)
 
 Regras por tipo de campo:
 - titulo, bloqueios, link_evidencia:
