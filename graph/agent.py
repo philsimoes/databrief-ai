@@ -128,29 +128,38 @@ Se a pergunta anterior era sobre um campo específico e a resposta é curta, ass
 
 JSON:"""
 
+# Perguntas fixas por campo — usadas quando o campo tem opções conhecidas
+# Evita que o Qwen 4-bit ignore o campo prioritário e invente perguntas
+PERGUNTAS_FIXAS = {
+    "valor_negocio": (
+        "Essa demanda vai apoiar decisões do dia a dia, decisões de médio prazo "
+        "ou o direcionamento estratégico do negócio?"
+    ),
+    "resultado_esperado": (
+        "Como será entregue — um dashboard interativo, um agente automatizado "
+        "ou outro formato técnico?"
+    ),
+    "tipo_demanda": (
+        "Essa demanda é uma Análise pontual, um Produto de Dados (dashboard ou agente), "
+        "uma Estruturante (pipeline/tabela Gold) ou uma Alarmística (monitoramento com alertas)?"
+    ),
+    "perguntas_de_negocio": (
+        "Quais perguntas de negócio essa demanda precisa responder? "
+        "Por exemplo: qual o índice de evasão por polo? quais cursos têm maior churn?"
+    ),
+    "titulo": (
+        "Como você chamaria essa demanda? Pode ser um nome curto e descritivo."
+    ),
+}
+
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
 Campo prioritário a preencher agora: {campo_prioritario}
-Outros campos ainda vazios: {outros_campos}
 Contexto da demanda até agora: {contexto}
 
-Regras OBRIGATÓRIAS:
-- Faça UMA pergunta apenas sobre o campo "{campo_prioritario}" — nunca sobre outro campo
-- NUNCA pergunte sobre campos que já estão no contexto como preenchidos
-- Seja direto e específico, sem enrolação
-- Use linguagem profissional mas natural
-- Não mencione nomes de campos técnicos — reformule em linguagem humana
-
-Instruções especiais por campo:
-- Se campo for "valor_negocio": pergunte "Essa demanda vai apoiar decisões do dia a dia, decisões de médio prazo ou o direcionamento estratégico do negócio?" — use essa pergunta exatamente, sem variações
-- Se campo for "classificacao_estrategica": apresente as opções e peça para escolher uma ou mais: Priorização, Insight para Decisão, Estruturante, Eficiência Operacional, Monitoramento, Qualidade de Dados, Evolução de Produto, Disponibilização de Informação
-- Se campo for "resultado_esperado": pergunte qual será o formato de entrega técnica.
-  PROIBIDO mencionar qualquer palavra que o usuário usou (ex: "relatório", "análise", "dashboard").
-  Use apenas estas opções padronizadas: dashboard interativo, agente automatizado,
-  pipeline de dados, tabela Gold, modelo analítico.
-  Formule assim: "Como será entregue — um dashboard interativo, um agente automatizado
-  ou outro formato técnico?"
-- Se campo for "tipo_demanda": pergunte se é uma Análise, Estruturante (pipeline/engenharia de dados), Produto de Dados (dashboard/agente) ou Alarmística (monitoramento com alertas)
+Faça UMA pergunta sobre o campo "{campo_prioritario}".
+Use linguagem natural e profissional.
+Não mencione nomes técnicos de campos.
 
 Pergunta:"""
 
@@ -396,9 +405,14 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         contexto=contexto
     )
 
-    t0 = time.time()
-    pergunta, _ = chamar_qwen(prompt, max_tokens=150)
-    latencia = time.time() - t0
+    # Usa pergunta fixa se disponível — mais confiável que o Qwen para campos com opções conhecidas
+    if campo_prioritario in PERGUNTAS_FIXAS:
+        pergunta = PERGUNTAS_FIXAS[campo_prioritario]
+        latencia = 0.0
+    else:
+        t0 = time.time()
+        pergunta, _ = chamar_qwen(prompt, max_tokens=150)
+        latencia = time.time() - t0
 
     demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
     sessao.demandas[sessao.indice_ativo] = demanda
