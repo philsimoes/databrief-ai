@@ -251,7 +251,15 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int) -> DemandSta
     if dados.get("objetivo") and not demanda.objetivo:
         demanda.objetivo = fp(dados["objetivo"])
     if dados.get("resultado_esperado") and not demanda.resultado_esperado:
-        demanda.resultado_esperado = fp(dados["resultado_esperado"])
+        # Aceita apenas valores técnicos padronizados — rejeita descrições de conteúdo
+        FORMATOS_VALIDOS = {
+            "dashboard", "dashboard interativo", "agente", "agente automatizado",
+            "pipeline", "pipeline de dados", "tabela gold", "tabela", "modelo analítico",
+            "relatório automatizado via agente", "outro"
+        }
+        valor_lower = str(dados["resultado_esperado"]).lower().strip()
+        if any(fmt in valor_lower for fmt in FORMATOS_VALIDOS):
+            demanda.resultado_esperado = fp(dados["resultado_esperado"])
     if dados.get("bloqueios") and not demanda.bloqueios:
         demanda.bloqueios = fp(dados["bloqueios"])
     if dados.get("link_evidencia") and not demanda.link_evidencia:
