@@ -325,6 +325,10 @@ class SessionState(BaseModel):
     demandas: List[DemandState] = Field(default_factory=list)
     indice_ativo: int = 0   # qual demanda está sendo trabalhada agora
 
+    # Última pergunta formulada pelo agente — usada no próximo turno para
+    # contextualizar a extração de campos (o Qwen sabe a qual campo a resposta se refere)
+    ultima_pergunta_agente: str = ""
+
     created_at: datetime = Field(default_factory=datetime.now)
 
     @property
