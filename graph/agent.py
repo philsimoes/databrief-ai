@@ -534,11 +534,18 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
     sessao_resultado = resultado["sessao"]
     sessao_resultado.ultima_pergunta_agente = resultado["ultima_resposta_agente"]
 
+    # Detecta campo prioritário diretamente das pendências — mais confiável
+    # que depender do estado do LangGraph, que pode descartar chaves entre nós
+    demanda_resultado = sessao_resultado.demanda_ativa
+    campo_prioritario = ""
+    if demanda_resultado and demanda_resultado.pendencias:
+        campo_prioritario = demanda_resultado.pendencias[0]
+
     return (
         sessao_resultado,
         resultado["ultima_resposta_agente"],
         resultado["briefing_gerado"],
-        resultado.get("campo_prioritario_atual", ""),
+        campo_prioritario,
     )
 
 
