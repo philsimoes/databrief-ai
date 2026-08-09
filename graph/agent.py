@@ -105,6 +105,9 @@ Contexto importante:
 - A última pergunta feita pelo agente foi: "{ultima_pergunta}"
 - A resposta do usuário deve ser interpretada como resposta a essa pergunta.
   Use isso para associar o conteúdo ao campo correto.
+- Se a resposta for curta (1-3 palavras), interprete-a como resposta direta
+  ao campo que estava sendo perguntado. Ex: se a pergunta era sobre formato
+  de entrega e o usuário respondeu "Um dashboard", extraia resultado_esperado = "dashboard interativo".
 
 Regras por tipo de campo:
 - titulo, bloqueios, link_evidencia:
@@ -143,11 +146,11 @@ Instruções especiais por campo:
 - Se campo for "valor_negocio": pergunte se o impacto é operacional (rotina diária), tático (decisões de médio prazo) ou estratégico (direcionamento do negócio)
 - Se campo for "classificacao_estrategica": apresente as opções e peça para escolher uma ou mais: Priorização, Insight para Decisão, Estruturante, Eficiência Operacional, Monitoramento, Qualidade de Dados, Evolução de Produto, Disponibilização de Informação
 - Se campo for "resultado_esperado": pergunte qual será o formato de entrega técnica.
-  Nunca repita o vocabulário usado pelo usuário como exemplo — reformule sempre.
-  Opções a apresentar: dashboard interativo, relatório automatizado via agente,
+  PROIBIDO mencionar qualquer palavra que o usuário usou (ex: "relatório", "análise", "dashboard").
+  Use apenas estas opções padronizadas: dashboard interativo, agente automatizado,
   pipeline de dados, tabela Gold, modelo analítico.
-  Exemplo de pergunta boa: "Como isso será entregue — um dashboard no Power BI,
-  um relatório gerado automaticamente por um agente, ou outro formato?"
+  Formule assim: "Como será entregue — um dashboard interativo, um agente automatizado
+  ou outro formato técnico?"
 - Se campo for "tipo_demanda": pergunte se é uma Análise, Estruturante (pipeline/engenharia de dados), Produto de Dados (dashboard/agente) ou Alarmística (monitoramento com alertas)
 
 Pergunta:"""
