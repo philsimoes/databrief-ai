@@ -374,7 +374,8 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     demanda = sessao.demanda_ativa
 
     contexto = estado_para_texto(demanda)
-    vazios = demanda.pendencias
+    # Recalcula campos_vazios diretamente — demanda.pendencias é zerado pelo LangGraph
+    vazios = campos_vazios(demanda)
 
     # Separa campo prioritário dos demais
     campo_prioritario = vazios[0] if vazios else ""
