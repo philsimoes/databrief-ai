@@ -266,15 +266,34 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
     if dados.get("objetivo") and not demanda.objetivo:
         demanda.objetivo = fp(dados["objetivo"])
     if dados.get("resultado_esperado") and not demanda.resultado_esperado:
-        # Aceita apenas valores técnicos padronizados — rejeita descrições de conteúdo
+        # Aceita inferências óbvias de formato técnico — o usuário pode corrigir
+        # no briefing final antes de aprovar (badge de proveniência mostra origem)
         FORMATOS_VALIDOS = {
             "dashboard", "dashboard interativo", "agente", "agente automatizado",
             "pipeline", "pipeline de dados", "tabela gold", "tabela", "modelo analítico",
             "relatório automatizado via agente", "outro"
         }
+        # Mapeamento de inferências óbvias — contexto deixa o formato claro
+        INFERENCIAS = {
+            "converse": "agente automatizado",
+            "conversar": "agente automatizado",
+            "chatbot": "agente automatizado",
+            "consolidar": "dashboard interativo",
+            "painel": "dashboard interativo",
+            "e-mail": "agente automatizado",
+            "alerta": "agente automatizado",
+        }
         valor_lower = str(dados["resultado_esperado"]).lower().strip()
+        # Aceita se for formato válido direto
         if any(fmt in valor_lower for fmt in FORMATOS_VALIDOS):
             demanda.resultado_esperado = fp(dados["resultado_esperado"])
+        # Ou tenta inferir pelo contexto da primeira mensagem
+        elif not ultima_pergunta:  # só no primeiro turno, sem pergunta anterior
+            texto_lower = turno_conteudo.lower()
+            for chave, formato in INFERENCIAS.items():
+                if chave in texto_lower:
+                    demanda.resultado_esperado = fp(formato)
+                    break
     if dados.get("bloqueios") and not demanda.bloqueios:
         demanda.bloqueios = fp(dados["bloqueios"])
     if dados.get("link_evidencia") and not demanda.link_evidencia:
