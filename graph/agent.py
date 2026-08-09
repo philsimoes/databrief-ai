@@ -98,8 +98,13 @@ class GraphState(TypedDict):
 
 PROMPT_EXTRAIR = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Analise o texto e extraia os campos do briefing em JSON.
+Analise a resposta do usuário e extraia campos do briefing em JSON.
 Retorne APENAS o JSON, sem explicações, sem markdown.
+
+Contexto importante:
+- A última pergunta feita pelo agente foi: "{ultima_pergunta}"
+- A resposta do usuário deve ser interpretada como resposta a essa pergunta.
+  Use isso para associar o conteúdo ao campo correto.
 
 Regras por tipo de campo:
 - titulo, bloqueios, link_evidencia:
@@ -174,14 +179,28 @@ def extrair_json(texto: str) -> dict:
 
 
 def campos_vazios(demanda: DemandState) -> List[str]:
-    """Retorna lista de campos obrigatórios ainda não preenchidos."""
+    """Retorna lista de campos obrigatórios ainda não preenchidos.
+
+    Regra de inferência:
+    - Para tipo Análise: resultado_esperado é inferível do objetivo.
+      Se objetivo estiver preenchido, não pergunta resultado_esperado separadamente —
+      será preenchido automaticamente em no_avaliar_completude.
+    """
     vazios = []
     if not demanda.tipo_demanda:
         vazios.append("tipo_demanda")
     if not demanda.objetivo:
         vazios.append("objetivo")
+
+    # resultado_esperado: obrigatório para todos os tipos, EXCETO Análise com objetivo preenchido
     if not demanda.resultado_esperado:
-        vazios.append("resultado_esperado")
+        analise_com_objetivo = (
+            demanda.tipo_demanda == TipoDemanda.ANALISE
+            and demanda.objetivo is not None
+        )
+        if not analise_com_objetivo:
+            vazios.append("resultado_esperado")
+
     if not demanda.valor_negocio:
         vazios.append("valor_negocio")
     if not demanda.classificacao_estrategica:
@@ -275,9 +294,14 @@ def no_extrair_campos(state: GraphState) -> GraphState:
     ultimo_turno = demanda.historico_turnos[-1]
     estado_atual = estado_para_texto(demanda)
 
+    # Recupera a última resposta do agente para dar contexto ao Qwen.
+    # Sem isso, o modelo não sabe a qual campo a resposta do usuário se refere.
+    ultima_pergunta = state.get("ultima_resposta_agente", "") or ""
+
     prompt = PROMPT_EXTRAIR.format(
         texto=ultimo_turno.conteudo,
-        estado_atual=estado_atual
+        estado_atual=estado_atual,
+        ultima_pergunta=ultima_pergunta,
     )
 
     t0 = time.time()
@@ -296,6 +320,21 @@ def no_extrair_campos(state: GraphState) -> GraphState:
 def no_avaliar_completude(state: GraphState) -> GraphState:
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
+
+    # Inferência automática: Análise com objetivo preenchido → resultado_esperado
+    # Regra: para Análise, o resultado entregue é sempre uma análise/relatório derivado do objetivo.
+    # Não faz sentido perguntar os dois separadamente.
+    if (
+        demanda.tipo_demanda == TipoDemanda.ANALISE
+        and demanda.objetivo is not None
+        and demanda.resultado_esperado is None
+    ):
+        valor_inferido = f"Análise: {demanda.objetivo.valor}"
+        demanda.resultado_esperado = FieldProvenance(
+            valor=valor_inferido,
+            origem=OrigemCampo.RULE,
+            turno=demanda.turno_atual,
+        )
 
     # Verificar dependência de Estruturante
     precisa_estruturante = (
@@ -442,23 +481,34 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
     """
     Processa um turno completo: registra input, roda o grafo, retorna resposta.
     Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None)
+
+    A última pergunta feita pelo agente é preservada em sessao.ultima_pergunta_agente
+    e passada no estado do grafo para que no_extrair_campos possa contextualizá-la.
     """
     demanda = sessao.demanda_ativa
     turno = TurnInput(conteudo=texto_usuario, tipo=TipoInput.TEXT)
     demanda.registrar_turno(turno)
     sessao.demandas[sessao.indice_ativo] = demanda
 
+    # Recupera a última pergunta do agente (turno anterior) para passar como contexto
+    ultima_pergunta_anterior = getattr(sessao, "ultima_pergunta_agente", "") or ""
+
     state = {
         "sessao": sessao,
-        "ultima_resposta_agente": "",
+        "ultima_resposta_agente": ultima_pergunta_anterior,
         "briefing_gerado": None,
         "aguardando_aprovacao": False,
         "erro": None,
     }
 
     resultado = agente.invoke(state)
+
+    # Persiste a resposta do agente para uso no próximo turno
+    sessao_resultado = resultado["sessao"]
+    sessao_resultado.ultima_pergunta_agente = resultado["ultima_resposta_agente"]
+
     return (
-        resultado["sessao"],
+        sessao_resultado,
         resultado["ultima_resposta_agente"],
         resultado["briefing_gerado"],
     )
