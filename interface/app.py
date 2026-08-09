@@ -185,16 +185,29 @@ def _bloco_briefing(demanda) -> str:
 # LÓGICA DO CHAT
 # ────────────────────────────────────────────────────────────
 
-def responder(mensagem, historico, sessao_state, modo_str):
+def adicionar_mensagem_usuario(mensagem, historico):
+    # Passo 1: sobe a mensagem do usuario imediatamente, limpa a caixa
     if not mensagem.strip():
-        sessao = SessionState.model_validate(sessao_state) if sessao_state else nova_sessao()
-        return (
-            historico, sessao_state,
-            renderizar_barra_progresso(sessao), "",
-            gr.update(visible=False), gr.update(visible=False),
-            gr.update(visible=False), gr.update(visible=False),
-            gr.update(visible=False),
-        )
+        return historico, mensagem
+    historico = historico or []
+    historico.append({"role": "user", "content": mensagem})
+    return historico, ""
+
+
+def processar_resposta(historico, sessao_state, modo_str):
+    # Passo 2: processa e adiciona a resposta do agente
+    _vazio = (historico, sessao_state,
+              _barra_html(0, "Aguardando demanda"), "",
+              gr.update(visible=False), gr.update(visible=False),
+              gr.update(visible=False), gr.update(visible=False),
+              gr.update(value=[]), gr.update(visible=False), gr.update(value=None))
+    if not historico:
+        return _vazio
+    mensagem = next(
+        (m["content"] for m in reversed(historico) if m["role"] == "user"), ""
+    )
+    if not mensagem:
+        return _vazio
 
     sessao = SessionState.model_validate(sessao_state) if sessao_state else nova_sessao()
     modo_map = {
@@ -205,30 +218,26 @@ def responder(mensagem, historico, sessao_state, modo_str):
     sessao.modo_execucao = modo_map.get(modo_str, ModoExecucao.GPU_LOCAL)
 
     sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, mensagem)
-
-    historico = historico or []
-    historico.append({"role": "user",      "content": mensagem})
     historico.append({"role": "assistant", "content": resposta})
 
     barra_html    = renderizar_barra_progresso(sessao)
     pronto        = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
     briefing_html = renderizar_briefing_final(sessao) if pronto else ""
-
     pede_classificacao = campo_atual == "classificacao_estrategica"
-    pede_resultado      = campo_atual == "resultado_esperado"
+    pede_resultado     = campo_atual == "resultado_esperado"
 
     return (
         historico,
         sessao.model_dump(mode="json"),
         barra_html,
         briefing_html,
-        gr.update(visible=pronto),              # secao_briefing
-        gr.update(visible=pronto),              # btn_aprovar
-        gr.update(visible=False),               # arquivo_download (reseta)
-        gr.update(visible=pede_classificacao),  # secao_checkbox
-        gr.update(value=[]),                    # checkbox_classificacao (limpa)
-        gr.update(visible=pede_resultado),      # secao_radio_resultado
-        gr.update(value=None),                  # radio_resultado (limpa)
+        gr.update(visible=pronto),
+        gr.update(visible=pronto),
+        gr.update(visible=False),
+        gr.update(visible=pede_classificacao),
+        gr.update(value=[]),
+        gr.update(visible=pede_resultado),
+        gr.update(value=None),
     )
 
 
@@ -436,15 +445,19 @@ def construir_interface(agente_compilado) -> gr.Blocks:
 
         # ── Eventos ──────────────────────────────────────────
         msg_input.submit(
-            fn=responder,
-            inputs=[msg_input, chatbot, sessao_state, modo_selector],
+            fn=adicionar_mensagem_usuario,
+            inputs=[msg_input, chatbot],
+            outputs=[chatbot, msg_input],
+        ).then(
+            fn=processar_resposta,
+            inputs=[chatbot, sessao_state, modo_selector],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
             ],
-        ).then(fn=lambda: "", outputs=msg_input)
+        )
 
         btn_confirmar_classificacao.click(
             fn=confirmar_classificacao,
