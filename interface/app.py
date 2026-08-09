@@ -222,23 +222,39 @@ def responder(mensagem, historico, sessao_state, modo_str):
 
 
 def confirmar_classificacao(selecoes, sessao_state, historico):
-    """Chamada quando o usuário confirma a seleção do CheckboxGroup."""
+    """Chamada quando o usuário confirma a seleção do CheckboxGroup.
+    Aplica a seleção e roda o grafo para formular a próxima pergunta.
+    """
     if not selecoes or not sessao_state:
-        return historico, sessao_state, gr.update(visible=True)
+        return historico, sessao_state, gr.update(visible=False), gr.update(visible=False)
 
     sessao = SessionState.model_validate(sessao_state)
     sessao = processar_selecao_checkbox(sessao, selecoes)
 
-    # Registra no histórico como se fosse uma mensagem do usuário
+    # Registra a seleção no histórico como mensagem do usuário
     texto_confirmado = ", ".join(selecoes)
     historico = historico or []
-    historico.append({"role": "user",      "content": f"Classificação: {texto_confirmado}"})
-    historico.append({"role": "assistant", "content": "Registrado. Continuando..."})
+    historico.append({"role": "user", "content": f"Classificação: {texto_confirmado}"})
+
+    # Roda o grafo com uma mensagem vazia para avançar para a próxima pergunta
+    # O grafo vai avaliar o estado atualizado e formular o próximo campo
+    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, "__checkbox__")
+
+    historico.append({"role": "assistant", "content": resposta})
+
+    pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
+    briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
+    pede_classificacao = campo_atual == "classificacao_estrategica"
 
     return (
         historico,
         sessao.model_dump(mode="json"),
-        gr.update(visible=False),  # esconde o checkbox após confirmação
+        gr.update(visible=False),               # esconde o checkbox
+        gr.update(visible=pede_classificacao),  # mostra de novo só se cair no mesmo campo
+        briefing_html_val,
+        gr.update(visible=pronto),              # secao_briefing
+        gr.update(visible=pronto),              # btn_aprovar
+        renderizar_barra_progresso(sessao),     # barra atualizada
     )
 
 
@@ -369,7 +385,13 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         btn_confirmar_classificacao.click(
             fn=confirmar_classificacao,
             inputs=[checkbox_classificacao, sessao_state, chatbot],
-            outputs=[chatbot, sessao_state, secao_checkbox],
+            outputs=[
+                chatbot, sessao_state,
+                secao_checkbox, secao_checkbox,   # esconde e controla reexibição
+                briefing_html,
+                secao_briefing, btn_aprovar,
+                barra_progresso,
+            ],
         )
 
         btn_aprovar.click(
