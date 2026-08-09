@@ -305,8 +305,8 @@ def no_extrair_campos(state: GraphState) -> GraphState:
 
     ultimo_turno = demanda.historico_turnos[-1]
 
-    # Mensagem interna do checkbox — não passa pelo Qwen, estado já foi atualizado
-    if ultimo_turno.conteudo == "__checkbox__":
+    # Mensagens internas dos componentes visuais — estado já foi atualizado, pula Qwen
+    if ultimo_turno.conteudo in ("__checkbox__", "__radio__"):
         return state
 
     estado_atual = estado_para_texto(demanda)
