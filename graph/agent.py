@@ -117,8 +117,16 @@ Regras por tipo de campo:
 - titulo, bloqueios, link_evidencia:
   extraia APENAS se explicitamente mencionado. Não invente.
 - objetivo: extraia ou infira do contexto geral da demanda
-- resultado_esperado: extraia APENAS se o usuário descreveu o que será entregue
-- tipo_demanda: infira se possível. Valores: "Análise", "Estruturante", "Produto de Dados", "Alarmística"
+- resultado_esperado: extraia APENAS se o usuário descreveu explicitamente o formato técnico de entrega
+  (ex: "quero um dashboard", "preciso de uma tabela Gold", "vamos fazer um agente").
+  NÃO extraia se o usuário apenas descreveu o tema ou conteúdo — "relatório com KPIs" é conteúdo, não formato.
+- tipo_demanda: infira com cuidado. Valores: "Análise", "Estruturante", "Produto de Dados", "Alarmística"
+  Dicas:
+  * "relatório automatizado", "dashboard", "painel", "agente" → Produto de Dados
+  * "pipeline", "tabela Gold", "engenharia de dados" → Estruturante
+  * "análise de", "entender", "investigar", "quanto/qual/como está" → Análise
+  * "alerta", "monitoramento", "aviso quando" → Alarmística
+  * Na dúvida, NÃO infira — deixe como null
 - valor_negocio: infira pelo contexto. Valores: "Operacional", "Tático", "Estratégico"
   Dica: decisões de médio prazo ou investimento = Tático; rotina diária = Operacional; direção do negócio = Estratégico
 - classificacao_estrategica: infira pelo contexto. Lista com um ou mais de:
