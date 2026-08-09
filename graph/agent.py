@@ -97,48 +97,34 @@ class GraphState(TypedDict):
 # PROMPTS
 # ────────────────────────────────────────────────────────────
 
-PROMPT_EXTRAIR = """Você é um assistente especializado em refinamento de demandas de dados.
+PROMPT_EXTRAIR = """Extraia campos de uma demanda de dados. Retorne APENAS JSON válido.
 
-Analise a resposta do usuário e extraia campos do briefing em JSON.
-Retorne APENAS o JSON, sem explicações, sem markdown.
+Pergunta anterior do agente: "{ultima_pergunta}"
+Resposta do usuário: {texto}
 
-Contexto importante:
-- A última pergunta feita pelo agente foi: "{ultima_pergunta}"
-- A resposta do usuário deve ser interpretada como resposta a essa pergunta.
-  Use isso para associar o conteúdo ao campo correto.
-- Se a resposta for curta (1-3 palavras), interprete-a como resposta direta
-  ao campo que estava sendo perguntado. Exemplos:
-  * pergunta sobre formato de entrega + resposta "Dashboard" ou "Um dashboard" → resultado_esperado = "dashboard interativo"
-  * pergunta sobre formato de entrega + resposta "Agente" → resultado_esperado = "agente automatizado"
-  * pergunta sobre impacto + resposta "Estratégico" → valor_negocio = "Estratégico"
-  * pergunta sobre título + resposta curta → titulo = (resposta exata do usuário)
+Campos já preenchidos (não sobrescreva): {estado_atual}
 
-Regras por tipo de campo:
-- titulo, bloqueios, link_evidencia:
-  extraia APENAS se explicitamente mencionado. Não invente.
-- objetivo: extraia ou infira do contexto geral da demanda
-- resultado_esperado: extraia APENAS se o usuário descreveu explicitamente o formato técnico de entrega
-  (ex: "quero um dashboard", "preciso de uma tabela Gold", "vamos fazer um agente").
-  NÃO extraia se o usuário apenas descreveu o tema ou conteúdo — "relatório com KPIs" é conteúdo, não formato.
-- tipo_demanda: infira com cuidado. Valores: "Análise", "Estruturante", "Produto de Dados", "Alarmística"
-  Dicas:
-  * "relatório automatizado", "dashboard", "painel", "agente" → Produto de Dados
-  * "pipeline", "tabela Gold", "engenharia de dados" → Estruturante
-  * "análise de", "entender", "investigar", "quanto/qual/como está" → Análise
-  * "alerta", "monitoramento", "aviso quando" → Alarmística
-  * Na dúvida, NÃO infira — deixe como null
-- valor_negocio: infira pelo contexto. Valores: "Operacional", "Tático", "Estratégico"
-  Dica: decisões de médio prazo ou investimento = Tático; rotina diária = Operacional; direção do negócio = Estratégico
-- classificacao_estrategica: infira pelo contexto. Lista com um ou mais de:
-  ["Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional",
-   "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"]
-- perguntas_de_negocio: extraia APENAS se explicitamente mencionado
+Extraia apenas o que está explícito. Para cada campo, siga:
+- objetivo: O que o usuário quer saber ou monitorar. Extraia sempre que possível.
+- tipo_demanda: Use EXATAMENTE um destes valores ou null:
+  "Produto de Dados" → dashboard, relatório automatizado, painel, agente
+  "Análise" → análise pontual, investigação, entender algo
+  "Estruturante" → pipeline, tabela Gold, engenharia de dados
+  "Alarmística" → alerta, monitoramento com aviso
+  Na dúvida: null
+- resultado_esperado: Formato técnico de entrega. Extraia APENAS se o usuário disse
+  explicitamente "dashboard", "agente", "tabela", "pipeline". Não extraia se descreveu só o tema.
+- valor_negocio: "Operacional", "Tático" ou "Estratégico". Infira pelo contexto.
+- titulo, bloqueios, link_evidencia: Só se mencionado explicitamente.
+- classificacao_estrategica: Lista. Valores permitidos:
+  "Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional",
+  "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"
+- perguntas_de_negocio: Só se mencionado explicitamente.
 
-Texto do usuário:
-{texto}
-
-Estado atual (campos já preenchidos — não repita, não sobrescreva):
-{estado_atual}
+Se a pergunta anterior era sobre um campo específico e a resposta é curta, associe ao campo:
+  formato de entrega → resultado_esperado
+  impacto no negócio → valor_negocio
+  título → titulo
 
 JSON:"""
 
