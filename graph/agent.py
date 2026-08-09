@@ -144,8 +144,13 @@ PERGUNTAS_FIXAS = {
         "uma Estruturante (pipeline/tabela Gold) ou uma Alarmística (monitoramento com alertas)?"
     ),
     "perguntas_de_negocio": (
-        "Quais perguntas de negócio essa demanda precisa responder? "
-        "Por exemplo: qual o índice de evasão por polo? quais cursos têm maior churn?"
+        "Quais perguntas essa demanda precisa responder? "
+        "Formule como perguntas diretas — por exemplo: 'Qual o índice de evasão por polo?' "
+        "ou 'Quais tutores têm menor tempo de resposta?'"
+    ),
+    "perguntas_de_negocio_reformular": (
+        "Preciso que sejam perguntas diretas, começando com 'Qual', 'Como', 'Quais' etc. "
+        "Por exemplo: 'Qual o tempo médio de resposta do tutor?' — como ficaria a sua?"
     ),
     "titulo": (
         "Como você chamaria essa demanda? Pode ser um nome curto e descritivo."
@@ -250,7 +255,7 @@ def estado_para_texto(demanda: DemandState) -> str:
     return "\n".join(linhas) if linhas else "Nenhum campo preenchido ainda."
 
 
-def aplicar_extracao(demanda: DemandState, dados: dict, turno: int) -> DemandState:
+def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergunta: str = "", turno_conteudo: str = "") -> DemandState:
     """Aplica os campos extraídos pelo Qwen ao estado da demanda."""
 
     def fp(valor):
@@ -300,6 +305,10 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int) -> DemandSta
         demanda.perguntas_de_negocio = [
             fp(p) for p in dados["perguntas_de_negocio"] if p
         ]
+    # Se a última pergunta era sobre perguntas_de_negocio e o Qwen retornou lista vazia,
+    # tenta extrair o texto do usuário diretamente como uma pergunta de negócio
+    # Se a pergunta era sobre perguntas_de_negocio e o Qwen retornou vazio,
+    # não faz nada — no_formular_pergunta vai detectar e pedir reformulação
 
     return demanda
 
@@ -338,7 +347,11 @@ def no_extrair_campos(state: GraphState) -> GraphState:
     latencia = time.time() - t0
 
     dados = extrair_json(resposta_raw)
-    demanda = aplicar_extracao(demanda, dados, demanda.turno_atual)
+    demanda = aplicar_extracao(
+        demanda, dados, demanda.turno_atual,
+        ultima_pergunta=ultima_pergunta,
+        turno_conteudo=ultimo_turno.conteudo,
+    )
     demanda.log_latencias[f"extracao_turno_{demanda.turno_atual}"] = latencia
 
     sessao.demandas[sessao.indice_ativo] = demanda
@@ -405,9 +418,20 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         contexto=contexto
     )
 
+    # Detecta se deve pedir reformulação de perguntas_de_negocio
+    # Ocorre quando o campo prioritário é perguntas_de_negocio E a última pergunta
+    # já era sobre esse campo — significa que o usuário respondeu sem formato de pergunta
+    ultima_pergunta_sessao = getattr(sessao, "ultima_pergunta_agente", "") or ""
+    pedir_reformulacao = (
+        campo_prioritario == "perguntas_de_negocio"
+        and "perguntas" in ultima_pergunta_sessao.lower()
+        and not demanda.perguntas_de_negocio
+    )
+    chave_pergunta = "perguntas_de_negocio_reformular" if pedir_reformulacao else campo_prioritario
+
     # Usa pergunta fixa se disponível — mais confiável que o Qwen para campos com opções conhecidas
-    if campo_prioritario in PERGUNTAS_FIXAS:
-        pergunta = PERGUNTAS_FIXAS[campo_prioritario]
+    if chave_pergunta in PERGUNTAS_FIXAS:
+        pergunta = PERGUNTAS_FIXAS[chave_pergunta]
         latencia = 0.0
     else:
         t0 = time.time()
