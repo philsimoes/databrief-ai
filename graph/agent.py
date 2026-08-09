@@ -89,6 +89,7 @@ class GraphState(TypedDict):
     ultima_resposta_agente: str
     briefing_gerado: Optional[dict]
     aguardando_aprovacao: bool
+    campo_prioritario_atual: str   # campo sendo perguntado — usado pela interface para mostrar componentes especiais
     erro: Optional[str]
 
 
@@ -411,6 +412,7 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     sessao.demandas[sessao.indice_ativo] = demanda
     state["sessao"] = sessao
     state["ultima_resposta_agente"] = pergunta.strip()
+    state["campo_prioritario_atual"] = campo_prioritario
     return state
 
 
@@ -488,7 +490,7 @@ def construir_grafo():
 def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
     """
     Processa um turno completo: registra input, roda o grafo, retorna resposta.
-    Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None)
+    Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None, campo_prioritario_atual)
 
     A última pergunta feita pelo agente é preservada em sessao.ultima_pergunta_agente
     e passada no estado do grafo para que no_extrair_campos possa contextualizá-la.
@@ -506,6 +508,7 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
         "ultima_resposta_agente": ultima_pergunta_anterior,
         "briefing_gerado": None,
         "aguardando_aprovacao": False,
+        "campo_prioritario_atual": "",
         "erro": None,
     }
 
@@ -519,4 +522,29 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str) -> tuple:
         sessao_resultado,
         resultado["ultima_resposta_agente"],
         resultado["briefing_gerado"],
+        resultado.get("campo_prioritario_atual", ""),
     )
+
+
+def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> SessionState:
+    """
+    Aplica a seleção múltipla de classificacao_estrategica direto ao estado.
+    Chamada pela interface quando o usuário confirma o CheckboxGroup.
+    Não passa pelo Qwen — as opções já vêm no formato correto.
+    """
+    demanda = sessao.demanda_ativa
+    if not demanda or not selecoes:
+        return sessao
+
+    classificacoes = []
+    for s in selecoes:
+        try:
+            classificacoes.append(ClassificacaoEstrategica(s))
+        except ValueError:
+            pass
+
+    if classificacoes:
+        demanda.classificacao_estrategica = classificacoes
+        sessao.demandas[sessao.indice_ativo] = demanda
+
+    return sessao
