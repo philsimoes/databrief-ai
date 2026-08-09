@@ -110,7 +110,7 @@ Extraia apenas o que está explícito. Para cada campo, siga:
   "Produto de Dados" → dashboard, relatório automatizado, painel, agente
   "Análise" → análise pontual, investigação, entender algo
   "Estruturante" → pipeline, tabela Gold, engenharia de dados
-  "Alarmística" → alerta, monitoramento com aviso
+  "Alarmística" → alerta, monitoramento com aviso, "sempre que", "quando X acontecer", receber notificação, receber e-mail, receber mensagem no Teams/Slack/WhatsApp/SMS, aviso automático, disparar alerta
   Na dúvida: null
 - resultado_esperado: Formato técnico de entrega. Extraia APENAS se o usuário disse
   explicitamente "dashboard", "agente", "tabela", "pipeline". Não extraia se descreveu só o tema.
