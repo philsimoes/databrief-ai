@@ -340,25 +340,26 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 ),
             )
 
+            # ── CheckboxGroup — classificacao_estrategica ─────
+            # Visível apenas quando o agente pede esse campo
+            # Fica acima da caixa de texto para aparecer próximo ao chat
+            with gr.Column(visible=False) as secao_checkbox:
+                gr.Markdown("**Selecione uma ou mais classificações estratégicas:**")
+                checkbox_classificacao = gr.CheckboxGroup(
+                    choices=OPCOES_CLASSIFICACAO,
+                    label="",
+                    show_label=False,
+                )
+                btn_confirmar_classificacao = gr.Button(
+                    "Confirmar seleção", variant="primary", size="sm"
+                )
+
             msg_input = gr.Textbox(
                 placeholder="Descreva sua demanda...",
                 show_label=False, lines=1, max_lines=4, submit_btn=True,
             )
 
             btn_reiniciar = gr.Button("Nova demanda", size="sm", variant="secondary")
-
-        # ── CheckboxGroup — classificacao_estrategica ─────────
-        # Visível apenas quando o agente pede esse campo
-        with gr.Column(elem_classes=["chat-container"], visible=False) as secao_checkbox:
-            gr.Markdown("**Selecione uma ou mais classificações estratégicas:**")
-            checkbox_classificacao = gr.CheckboxGroup(
-                choices=OPCOES_CLASSIFICACAO,
-                label="",
-                show_label=False,
-            )
-            btn_confirmar_classificacao = gr.Button(
-                "Confirmar seleção", variant="primary", size="sm"
-            )
 
         # ── Briefing final ────────────────────────────────────
         with gr.Column(elem_classes=["chat-container"], visible=False) as secao_briefing:
