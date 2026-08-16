@@ -2,6 +2,7 @@
 # interface/app.py
 # DataBrief AI — Interface Gradio
 # Chat centralizado + CheckboxGroup para classificacao_estrategica
+# + entrada de áudio (microfone/upload) com transcrição revisável
 # Gradio 5.x / 6.x compatível
 # ============================================================
 
@@ -9,9 +10,10 @@ import gradio as gr
 import json
 from schemas.models import (
     SessionState, DemandState, ModoExecucao,
-    ReadinessStatus, TipoDemanda, ClassificacaoEstrategica
+    ReadinessStatus, TipoDemanda, ClassificacaoEstrategica, TipoInput
 )
 from graph.agent import processar_turno, processar_selecao_checkbox
+from audio.transcricao import transcrever_audio
 
 # ────────────────────────────────────────────────────────────
 # OPÇÕES DE CLASSIFICAÇÃO ESTRATÉGICA
@@ -203,8 +205,10 @@ def adicionar_mensagem_usuario(mensagem, historico):
     return historico, ""
 
 
-def processar_resposta(historico, sessao_state, modo_str):
+def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"):
     # Passo 2: processa e adiciona a resposta do agente
+    # origem_mensagem: "TEXT" (digitado) ou "AUDIO" (transcrição confirmada) —
+    # define o TipoInput do turno, propagado até o painel de proveniência.
     _vazio = (historico, sessao_state,
               _barra_html(0, "Aguardando demanda"), "",
               gr.update(visible=False), gr.update(visible=False),
@@ -231,7 +235,8 @@ def processar_resposta(historico, sessao_state, modo_str):
     }
     sessao.modo_execucao = modo_map.get(modo_str, ModoExecucao.GPU_LOCAL)
 
-    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, mensagem)
+    tipo_turno = TipoInput.AUDIO if origem_mensagem == "AUDIO" else TipoInput.TEXT
+    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, mensagem, tipo=tipo_turno)
     historico.append({"role": "assistant", "content": resposta})
 
     barra_html    = renderizar_barra_progresso(sessao)
@@ -369,6 +374,32 @@ def reiniciar(historico, sessao_state):
 
 
 # ────────────────────────────────────────────────────────────
+# LÓGICA DE ÁUDIO
+# ────────────────────────────────────────────────────────────
+
+def transcrever_audio_ui(caminho_audio):
+    """Chamada quando o usuário termina de gravar ou envia um arquivo de áudio.
+    Transcreve (carrega Whisper, transcreve, libera a GPU) e mostra o texto
+    num campo editável para revisão antes de entrar no chat.
+    """
+    if not caminho_audio:
+        return gr.update(visible=False), ""
+    resultado = transcrever_audio(caminho_audio)
+    return gr.update(visible=True), resultado["texto"]
+
+
+def enviar_transcricao(texto_transcrito, historico):
+    """Chamada quando o usuário confirma a transcrição (já revisada/corrigida)
+    e ela entra no chat como se fosse uma mensagem digitada.
+    """
+    if not texto_transcrito or not texto_transcrito.strip():
+        return historico, "", gr.update(visible=False)
+    historico = historico or []
+    historico.append({"role": "user", "content": texto_transcrito})
+    return historico, "", gr.update(visible=False)
+
+
+# ────────────────────────────────────────────────────────────
 # CONSTRUÇÃO DA INTERFACE
 # ────────────────────────────────────────────────────────────
 
@@ -385,6 +416,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
 
         demo.launch.__func__  # apenas referência — css vai no launch()
         sessao_state = gr.State({})
+        origem_mensagem_state = gr.State("TEXT")
 
         # ── Cabeçalho ────────────────────────────────────────
         with gr.Row():
@@ -446,6 +478,25 @@ def construir_interface(agente_compilado) -> gr.Blocks:
 
             btn_reiniciar = gr.Button("Nova demanda", size="sm", variant="secondary")
 
+            # ── Entrada de áudio — microfone/upload + transcrição revisável ──
+            with gr.Row():
+                audio_input = gr.Audio(
+                    sources=["microphone", "upload"],
+                    type="filepath",
+                    label="Ou grave/envie um áudio (até 5 min)",
+                )
+
+            with gr.Column(visible=False) as secao_transcricao:
+                gr.Markdown("**Revise a transcrição antes de enviar** (corrija siglas ou nomes se precisar):")
+                editor_transcricao = gr.Textbox(lines=3, show_label=False)
+                with gr.Row():
+                    btn_confirmar_transcricao = gr.Button(
+                        "Usar esta transcrição", variant="primary", size="sm"
+                    )
+                    btn_descartar_transcricao = gr.Button(
+                        "Descartar", size="sm", variant="secondary"
+                    )
+
         # ── Briefing final ────────────────────────────────────
         with gr.Column(elem_classes=["chat-container"], visible=False) as secao_briefing:
             briefing_html = gr.HTML(value="")
@@ -463,14 +514,49 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             inputs=[msg_input, chatbot],
             outputs=[chatbot, msg_input],
         ).then(
+            fn=lambda: "TEXT",
+            outputs=[origem_mensagem_state],
+        ).then(
             fn=processar_resposta,
-            inputs=[chatbot, sessao_state, modo_selector],
+            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
             ],
+        )
+
+        audio_input.change(
+            fn=transcrever_audio_ui,
+            inputs=[audio_input],
+            outputs=[secao_transcricao, editor_transcricao],
+        )
+
+        btn_confirmar_transcricao.click(
+            fn=enviar_transcricao,
+            inputs=[editor_transcricao, chatbot],
+            outputs=[chatbot, editor_transcricao, secao_transcricao],
+        ).then(
+            fn=lambda: None,
+            outputs=[audio_input],
+        ).then(
+            fn=lambda: "AUDIO",
+            outputs=[origem_mensagem_state],
+        ).then(
+            fn=processar_resposta,
+            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state],
+            outputs=[
+                chatbot, sessao_state, barra_progresso, briefing_html,
+                secao_briefing, btn_aprovar, arquivo_download,
+                secao_checkbox, checkbox_classificacao,
+                secao_radio_resultado, radio_resultado,
+            ],
+        )
+
+        btn_descartar_transcricao.click(
+            fn=lambda: ("", gr.update(visible=False), None),
+            outputs=[editor_transcricao, secao_transcricao, audio_input],
         )
 
         btn_confirmar_classificacao.click(
