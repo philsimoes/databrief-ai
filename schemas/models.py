@@ -242,6 +242,11 @@ class DemandState(BaseModel):
     objetivo:                 Optional[FieldProvenance] = None
     perguntas_de_negocio:     List[FieldProvenance]     = Field(default_factory=list)
     resultado_esperado:       Optional[FieldProvenance] = None
+    # Contexto de mercado recuperado pelo RAG a partir do objetivo — não é um
+    # campo obrigatório do briefing, é enriquecimento citável (Bloco 05b).
+    # Cada item é uma citação: valor = citação legível, arquivo = fonte,
+    # origem = OrigemCampo.RAG. Populado uma vez, quando a demanda fica pronta.
+    contexto_rag:             List[FieldProvenance]     = Field(default_factory=list)
     bloqueios:                Optional[FieldProvenance] = None
     link_evidencia:           Optional[FieldProvenance] = None
     status:                   StatusDemanda             = StatusDemanda.PARADO
@@ -402,6 +407,11 @@ class BriefingOutput(BaseModel):
     # Proveniência completa de cada campo (para o painel)
     proveniencia: Dict[str, FieldProvenance] = Field(default_factory=dict)
 
+    # Contexto de mercado citável recuperado pelo RAG — seção "Fontes" do
+    # briefing (Bloco 05b). Cada item já é um FieldProvenance com
+    # origem=RAG, então carrega junto o nome do arquivo/página e a citação.
+    fontes_rag: List[FieldProvenance] = Field(default_factory=list)
+
     @classmethod
     def from_demand_state(cls, state: DemandState, modo: ModoExecucao) -> "BriefingOutput":
         """
@@ -435,6 +445,7 @@ class BriefingOutput(BaseModel):
             pendencias=state.pendencias,
             modo_execucao=modo,
             proveniencia=prov,
+            fontes_rag=state.contexto_rag,
         )
 
     def to_sharepoint_dict(self) -> Dict[str, Any]:
