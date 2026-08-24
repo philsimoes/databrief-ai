@@ -152,6 +152,24 @@ def _bloco_briefing(demanda) -> str:
             <div style="display:flex;flex-wrap:wrap;gap:4px;">{items}</div>
         </div>"""
 
+    fontes_rag_html = ""
+    if demanda.contexto_rag:
+        items_rag = "".join(
+            f"""<div style="background:#22c55e0d;border:1px solid #22c55e33;
+                        border-radius:8px;padding:8px 12px;margin-bottom:6px;">
+                <div style="font-size:11px;color:#166534;font-weight:600;margin-bottom:2px;">
+                    {fp.arquivo}
+                </div>
+                <div style="font-size:12px;color:#374151;">{fp.valor}</div>
+            </div>"""
+            for fp in demanda.contexto_rag
+        )
+        fontes_rag_html = f"""
+        <div style="margin-top:12px;">
+            <div style="font-size:12px;color:#9ca3af;margin-bottom:6px;">Contexto de mercado (RAG)</div>
+            {items_rag}
+        </div>"""
+
     classificacoes = ""
     if demanda.classificacao_estrategica:
         vals = ", ".join(c.value for c in demanda.classificacao_estrategica)
@@ -189,6 +207,7 @@ def _bloco_briefing(demanda) -> str:
             {fp_linha("Bloqueios", demanda.bloqueios)}
         </div>
         {pendencias_html}
+        {fontes_rag_html}
     </div>"""
 
 
@@ -355,6 +374,10 @@ def aprovar_briefing(sessao_state):
             k: {"origem": v.origem.value, "turno": v.turno}
             for k, v in briefing.proveniencia.items()
         },
+        "fontes_rag": [
+            {"arquivo": fp.arquivo, "citacao": fp.valor}
+            for fp in briefing.fontes_rag
+        ],
     }
     caminho = f"/tmp/briefing_{briefing.id_demanda}.json"
     with open(caminho, "w", encoding="utf-8") as f:
