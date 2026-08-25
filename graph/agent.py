@@ -282,6 +282,27 @@ def estado_para_texto(demanda: DemandState) -> str:
     return "\n".join(linhas) if linhas else "Nenhum campo preenchido ainda."
 
 
+_INICIOS_PERGUNTA = (
+    "qual", "quais", "quanto", "quantos", "quantas",
+    "como", "quando", "onde", "quem", "por que", "porque", "pra que", "o que",
+)
+
+
+def _parece_pergunta_direta(texto: str) -> bool:
+    """Heurística leve: o texto termina com '?' ou começa com uma palavra
+    interrogativa comum. Usada como rede de segurança em aplicar_extracao —
+    o Qwen3-4B nem sempre extrai perguntas_de_negocio de forma confiável
+    mesmo quando o usuário já respondeu com uma pergunta direta válida
+    (falha observada em testes: mesma resposta, ora extrai ora não).
+    """
+    t = (texto or "").strip().lower()
+    if not t:
+        return False
+    if t.endswith("?"):
+        return True
+    return t.startswith(_INICIOS_PERGUNTA)
+
+
 def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergunta: str = "", turno_conteudo: str = "", origem: OrigemCampo = OrigemCampo.TEXT) -> DemandState:
     """Aplica os campos extraídos pelo Qwen ao estado da demanda.
 
@@ -357,10 +378,17 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         demanda.perguntas_de_negocio = [
             fp(p) for p in dados["perguntas_de_negocio"] if p
         ]
-    # Se a última pergunta era sobre perguntas_de_negocio e o Qwen retornou lista vazia,
-    # tenta extrair o texto do usuário diretamente como uma pergunta de negócio
-    # Se a pergunta era sobre perguntas_de_negocio e o Qwen retornou vazio,
-    # não faz nada — no_formular_pergunta vai detectar e pedir reformulação
+    # Se a última pergunta era sobre perguntas_de_negocio e o Qwen retornou lista
+    # vazia, mas o texto do usuário já parece uma pergunta direta válida, usa o
+    # texto bruto em vez de pedir reformulação à toa — evita o loop de "preciso
+    # que sejam perguntas diretas" quando o usuário já respondeu corretamente
+    # (a extração do Qwen3-4B falha esse campo com alguma frequência).
+    elif (
+        not demanda.perguntas_de_negocio
+        and "pergunta" in ultima_pergunta.lower()
+        and _parece_pergunta_direta(turno_conteudo)
+    ):
+        demanda.perguntas_de_negocio = [fp(turno_conteudo.strip())]
 
     return demanda
 
