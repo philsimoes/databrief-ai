@@ -247,6 +247,12 @@ class DemandState(BaseModel):
     bloqueios:                Optional[FieldProvenance] = None
     link_evidencia:           Optional[FieldProvenance] = None
     status:                   StatusDemanda             = StatusDemanda.PARADO
+    resumo_executivo:         Optional[str] = None   # gerado pelo Qwen em
+                                                       # no_gerar_briefing — texto
+                                                       # já mostrado e implicitamente
+                                                       # revisado pelo usuário antes da
+                                                       # aprovação; reaproveitado pelo
+                                                       # TTS (Piper) após aprovar
 
     # Campos específicos por tipo (apenas um será populado)
     campos_analise:       Optional[CamposAnalise]      = None
@@ -392,6 +398,7 @@ class BriefingOutput(BaseModel):
     perguntas_de_negocio:      List[str]
     bloqueios:                 Optional[str] = None
     link_evidencia:            Optional[str] = None
+    resumo_executivo:          Optional[str] = None   # texto usado pelo TTS (Piper)
 
     # Campos de rastreabilidade do DataBrief AI
     id_demanda:   str
@@ -431,6 +438,7 @@ class BriefingOutput(BaseModel):
             perguntas_de_negocio=[fp.valor for fp in state.perguntas_de_negocio],
             bloqueios=valor(state.bloqueios),
             link_evidencia=valor(state.link_evidencia),
+            resumo_executivo=state.resumo_executivo,
             id_demanda=state.id_demanda,
             sessao_id=state.sessao_id,
             completude=state.calcular_completude(),
