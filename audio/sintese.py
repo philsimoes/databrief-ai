@@ -76,12 +76,16 @@ def _limpar_markdown(texto: str) -> str:
     áudio. Sanitização mecânica — não depende do Qwen se comportar bem.
     """
     t = texto
-    t = re.sub(r'\*\*(.*?)\*\*', r'\1', t)          # **negrito** → negrito
-    t = re.sub(r'\*(.*?)\*', r'\1', t)               # *itálico* → itálico
-    t = re.sub(r'^#{1,6}\s*', '', t, flags=re.MULTILINE)   # ## título → título
-    t = re.sub(r'^[\-\*•]\s+', '', t, flags=re.MULTILINE)  # - item → item
-    t = re.sub(r'`([^`]*)`', r'\1', t)               # `código` → código
-    t = re.sub(r'\s+', ' ', t).strip()               # espaços/quebras extras
+    t = re.sub(r'^#{1,6}\s*', '', t, flags=re.MULTILINE)    # ## título → título
+    t = re.sub(r'^[\-\*•]\s+', '', t, flags=re.MULTILINE)   # - item / * item → item
+    t = re.sub(r'`([^`]*)`', r'\1', t)                      # `código` → código
+    # Remoção "bruta" de qualquer * # _ que sobrar, em vez de tentar casar
+    # pares de **negrito**/*itálico* com regex — um * desemparelhado (ou um
+    # padrão que o Qwen formatou diferente do esperado) faria o regex de
+    # pares não bater e deixaria o símbolo passar direto pro Piper, que lê
+    # "asterisco" em voz alta. Aqui não sobra nada, não importa o padrão.
+    t = t.replace('*', '').replace('_', '').replace('#', '')
+    t = re.sub(r'\s+', ' ', t).strip()                      # espaços/quebras extras
     return t
 
 
