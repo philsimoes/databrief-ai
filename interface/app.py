@@ -14,6 +14,7 @@ from schemas.models import (
 )
 from graph.agent import processar_turno, processar_selecao_checkbox
 from audio.transcricao import transcrever_audio
+from attachments.extracao import extrair_texto_anexo
 
 # ────────────────────────────────────────────────────────────
 # OPÇÕES DE CLASSIFICAÇÃO ESTRATÉGICA
@@ -205,10 +206,12 @@ def adicionar_mensagem_usuario(mensagem, historico):
     return historico, ""
 
 
-def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"):
+def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT", nome_arquivo=""):
     # Passo 2: processa e adiciona a resposta do agente
-    # origem_mensagem: "TEXT" (digitado) ou "AUDIO" (transcrição confirmada) —
-    # define o TipoInput do turno, propagado até o painel de proveniência.
+    # origem_mensagem: "TEXT" (digitado), "AUDIO" (transcrição confirmada) ou
+    # "FILE" (texto de anexo confirmado) — define o TipoInput do turno,
+    # propagado até o painel de proveniência. nome_arquivo só é usado quando
+    # origem_mensagem == "FILE".
     _vazio = (historico, sessao_state,
               _barra_html(0, "Aguardando demanda"), "",
               gr.update(visible=False), gr.update(visible=False),
@@ -235,8 +238,11 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
     }
     sessao.modo_execucao = modo_map.get(modo_str, ModoExecucao.GPU_LOCAL)
 
-    tipo_turno = TipoInput.AUDIO if origem_mensagem == "AUDIO" else TipoInput.TEXT
-    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, mensagem, tipo=tipo_turno)
+    MAPA_TIPO_TURNO = {"AUDIO": TipoInput.AUDIO, "FILE": TipoInput.FILE}
+    tipo_turno = MAPA_TIPO_TURNO.get(origem_mensagem, TipoInput.TEXT)
+    sessao, resposta, briefing, campo_atual = processar_turno(
+        agente, sessao, mensagem, tipo=tipo_turno, nome_arquivo=nome_arquivo or None
+    )
     historico.append({"role": "assistant", "content": resposta})
 
     barra_html    = renderizar_barra_progresso(sessao)
@@ -352,7 +358,7 @@ def aprovar_briefing(sessao_state):
         "gerado_em":     briefing.gerado_em.isoformat(),
         "modo_execucao": briefing.modo_execucao.value,
         "proveniencia":  {
-            k: {"origem": v.origem.value, "turno": v.turno}
+            k: {"origem": v.origem.value, "turno": v.turno, "arquivo": v.arquivo}
             for k, v in briefing.proveniencia.items()
         },
     }
@@ -400,6 +406,39 @@ def enviar_transcricao(texto_transcrito, historico):
 
 
 # ────────────────────────────────────────────────────────────
+# LÓGICA DE ANEXO — PDF/DOCX/TXT
+# ────────────────────────────────────────────────────────────
+
+def extrair_anexo_ui(caminho_arquivo):
+    """Chamada quando o usuário anexa um documento (PDF, DOCX ou TXT).
+    Extrai o texto e mostra num campo editável para revisão antes de entrar
+    no chat — útil porque a extração pode trazer ruído de formatação (quebras
+    de linha, cabeçalhos repetidos) que vale a pena limpar antes de enviar.
+    """
+    if not caminho_arquivo:
+        return gr.update(visible=False), "", ""
+    resultado = extrair_texto_anexo(caminho_arquivo)
+    texto = resultado["texto"]
+    if resultado["truncado"]:
+        texto += (
+            "\n\n[...texto truncado — o documento é muito longo; revise e "
+            "edite antes de enviar se precisar de outro trecho...]"
+        )
+    return gr.update(visible=True), texto, resultado["arquivo"]
+
+
+def enviar_anexo(texto_anexo, historico):
+    """Chamada quando o usuário confirma o texto extraído do anexo (já
+    revisado/editado) e ele entra no chat como se fosse uma mensagem digitada.
+    """
+    if not texto_anexo or not texto_anexo.strip():
+        return historico, "", gr.update(visible=False)
+    historico = historico or []
+    historico.append({"role": "user", "content": texto_anexo})
+    return historico, "", gr.update(visible=False)
+
+
+# ────────────────────────────────────────────────────────────
 # CONSTRUÇÃO DA INTERFACE
 # ────────────────────────────────────────────────────────────
 
@@ -417,6 +456,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         demo.launch.__func__  # apenas referência — css vai no launch()
         sessao_state = gr.State({})
         origem_mensagem_state = gr.State("TEXT")
+        nome_arquivo_state = gr.State("")
 
         # ── Cabeçalho ────────────────────────────────────────
         with gr.Row():
@@ -497,6 +537,25 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                         "Descartar", size="sm", variant="secondary"
                     )
 
+            # ── Entrada de anexo — PDF/DOCX/TXT + texto revisável ─────
+            with gr.Row():
+                anexo_input = gr.File(
+                    file_types=[".pdf", ".docx", ".txt"],
+                    label="Ou anexe um documento (PDF, DOCX ou TXT)",
+                    type="filepath",
+                )
+
+            with gr.Column(visible=False) as secao_anexo:
+                gr.Markdown("**Revise o texto extraído antes de enviar** (limpe ruído de formatação se precisar):")
+                editor_anexo = gr.Textbox(lines=5, show_label=False)
+                with gr.Row():
+                    btn_confirmar_anexo = gr.Button(
+                        "Usar este texto", variant="primary", size="sm"
+                    )
+                    btn_descartar_anexo = gr.Button(
+                        "Descartar", size="sm", variant="secondary"
+                    )
+
         # ── Briefing final ────────────────────────────────────
         with gr.Column(elem_classes=["chat-container"], visible=False) as secao_briefing:
             briefing_html = gr.HTML(value="")
@@ -557,6 +616,38 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         btn_descartar_transcricao.click(
             fn=lambda: ("", gr.update(visible=False), None),
             outputs=[editor_transcricao, secao_transcricao, audio_input],
+        )
+
+        anexo_input.change(
+            fn=extrair_anexo_ui,
+            inputs=[anexo_input],
+            outputs=[secao_anexo, editor_anexo, nome_arquivo_state],
+        )
+
+        btn_confirmar_anexo.click(
+            fn=enviar_anexo,
+            inputs=[editor_anexo, chatbot],
+            outputs=[chatbot, editor_anexo, secao_anexo],
+        ).then(
+            fn=lambda: None,
+            outputs=[anexo_input],
+        ).then(
+            fn=lambda: "FILE",
+            outputs=[origem_mensagem_state],
+        ).then(
+            fn=processar_resposta,
+            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state, nome_arquivo_state],
+            outputs=[
+                chatbot, sessao_state, barra_progresso, briefing_html,
+                secao_briefing, btn_aprovar, arquivo_download,
+                secao_checkbox, checkbox_classificacao,
+                secao_radio_resultado, radio_resultado,
+            ],
+        )
+
+        btn_descartar_anexo.click(
+            fn=lambda: ("", gr.update(visible=False), None, ""),
+            outputs=[editor_anexo, secao_anexo, anexo_input, nome_arquivo_state],
         )
 
         btn_confirmar_classificacao.click(
