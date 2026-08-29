@@ -276,16 +276,18 @@ def _parece_pergunta_direta(texto: str) -> bool:
     return t.startswith(_INICIOS_PERGUNTA)
 
 
-def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergunta: str = "", turno_conteudo: str = "", origem: OrigemCampo = OrigemCampo.TEXT) -> DemandState:
+def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergunta: str = "", turno_conteudo: str = "", origem: OrigemCampo = OrigemCampo.TEXT, nome_arquivo: str = None) -> DemandState:
     """Aplica os campos extraídos pelo Qwen ao estado da demanda.
 
     `origem` identifica de onde veio o turno que originou essa extração
     (TEXT digitado, AUDIO transcrito, ATTACHMENT de arquivo anexado) —
     propagada para o painel de proveniência via FieldProvenance.
+    `nome_arquivo` só é relevante quando origem == ATTACHMENT — propagado ao
+    campo FieldProvenance.arquivo para rastrear de qual anexo veio o dado.
     """
 
     def fp(valor):
-        return FieldProvenance(valor=valor, origem=origem, turno=turno)
+        return FieldProvenance(valor=valor, origem=origem, turno=turno, arquivo=nome_arquivo)
 
     if dados.get("titulo") and not demanda.titulo:
         demanda.titulo = fp(dados["titulo"])
@@ -414,6 +416,7 @@ def no_extrair_campos(state: GraphState) -> GraphState:
         ultima_pergunta=ultima_pergunta,
         turno_conteudo=ultimo_turno.conteudo,
         origem=origem,
+        nome_arquivo=getattr(ultimo_turno, "nome_arquivo", None),
     )
     demanda.log_latencias[f"extracao_turno_{demanda.turno_atual}"] = latencia
 
@@ -580,7 +583,7 @@ def construir_grafo():
 # Exportada para uso direto no notebook e no Gradio
 # ────────────────────────────────────────────────────────────
 
-def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: TipoInput = TipoInput.TEXT) -> tuple:
+def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: TipoInput = TipoInput.TEXT, nome_arquivo: str = None) -> tuple:
     """
     Processa um turno completo: registra input, roda o grafo, retorna resposta.
     Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None, campo_prioritario_atual)
@@ -588,13 +591,14 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: Tipo
     `tipo` identifica se o turno veio de texto digitado, áudio transcrito ou
     arquivo anexado (TipoInput.TEXT / AUDIO / FILE) — propagado ao TurnInput
     e usado por no_extrair_campos para marcar a origem correta no painel
-    de proveniência.
+    de proveniência. `nome_arquivo` só é usado quando tipo == FILE — nome do
+    anexo de onde veio o texto, propagado até o FieldProvenance.arquivo.
 
     A última pergunta feita pelo agente é preservada em sessao.ultima_pergunta_agente
     e passada no estado do grafo para que no_extrair_campos possa contextualizá-la.
     """
     demanda = sessao.demanda_ativa
-    turno = TurnInput(conteudo=texto_usuario, tipo=tipo)
+    turno = TurnInput(conteudo=texto_usuario, tipo=tipo, nome_arquivo=nome_arquivo)
     demanda.registrar_turno(turno)
     sessao.demandas[sessao.indice_ativo] = demanda
 
