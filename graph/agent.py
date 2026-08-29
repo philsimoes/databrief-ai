@@ -115,7 +115,9 @@ Extraia apenas o que está explícito. Para cada campo, siga:
 - resultado_esperado: Formato técnico de entrega. Extraia APENAS se o usuário disse
   explicitamente "dashboard", "agente", "tabela", "pipeline". Não extraia se descreveu só o tema.
 - valor_negocio: "Operacional", "Tático" ou "Estratégico". Infira pelo contexto.
-- titulo, bloqueios, link_evidencia: Só se mencionado explicitamente.
+- titulo, bloqueios, link_evidencia: Só se mencionado explicitamente. Se não houver
+  menção, NÃO inclua a chave no JSON — nunca escreva frases como "não há bloqueios
+  mencionados" ou "não mencionado" como se fosse um valor.
 - classificacao_estrategica: Lista. Valores permitidos:
   "Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional",
   "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"
@@ -261,6 +263,29 @@ _INICIOS_PERGUNTA = (
 )
 
 
+_PADROES_SEM_RESPOSTA = (
+    "não há", "nao ha", "não foi mencionado", "nao foi mencionado",
+    "nenhum bloqueio", "nenhuma menção", "não mencionado", "nao mencionado",
+    "n/a", "não aplicável", "nao aplicavel", "não se aplica", "nao se aplica",
+    "não informado", "nao informado", "sem bloqueios", "sem bloqueio",
+    "não identificado", "nao identificado",
+)
+
+
+def _parece_resposta_vazia(texto: str) -> bool:
+    """Heurística leve: detecta quando o Qwen preenche um campo opcional
+    (bloqueios, link_evidencia) com uma frase de "não há nada aqui" em vez de
+    simplesmente omitir a chave — violação observada da instrução do prompt
+    ("só se mencionado explicitamente"). Sem essa checagem, filler do tipo
+    "não há bloqueios mencionados" entra no briefing como se fosse um dado
+    real extraído do usuário/anexo, com badge de proveniência e tudo.
+    """
+    t = (texto or "").strip().lower()
+    if not t:
+        return True
+    return any(t.startswith(p) or p in t for p in _PADROES_SEM_RESPOSTA)
+
+
 def _parece_pergunta_direta(texto: str) -> bool:
     """Heurística leve: o texto termina com '?' ou começa com uma palavra
     interrogativa comum. Usada como rede de segurança em aplicar_extracao —
@@ -322,9 +347,17 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
                 if chave in texto_lower:
                     demanda.resultado_esperado = fp(formato)
                     break
-    if dados.get("bloqueios") and not demanda.bloqueios:
+    if (
+        dados.get("bloqueios")
+        and not demanda.bloqueios
+        and not _parece_resposta_vazia(dados["bloqueios"])
+    ):
         demanda.bloqueios = fp(dados["bloqueios"])
-    if dados.get("link_evidencia") and not demanda.link_evidencia:
+    if (
+        dados.get("link_evidencia")
+        and not demanda.link_evidencia
+        and not _parece_resposta_vazia(dados["link_evidencia"])
+    ):
         demanda.link_evidencia = fp(dados["link_evidencia"])
 
     if dados.get("tipo_demanda") and not demanda.tipo_demanda:
