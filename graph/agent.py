@@ -568,6 +568,10 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     latencia = time.time() - t0
 
     demanda.log_latencias[f"briefing_turno_{demanda.turno_atual}"] = latencia
+    # Guarda o resumo puro (sem o texto de completude/aprovação em volta) —
+    # o usuário já vê e implicitamente revisa esse texto antes de aprovar, e
+    # ele é reaproveitado depois pelo TTS (Piper) sem precisar gerar de novo.
+    demanda.resumo_executivo = resumo.strip()
     briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao)
 
     sessao.demandas[sessao.indice_ativo] = demanda
