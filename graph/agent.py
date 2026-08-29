@@ -349,9 +349,20 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         # Limita a 3 classificações — mais que isso indica inferência imprecisa do Qwen
         demanda.classificacao_estrategica = classificacoes[:3]
 
-    if dados.get("perguntas_de_negocio") and not demanda.perguntas_de_negocio:
+    raw_perguntas = dados.get("perguntas_de_negocio")
+    if isinstance(raw_perguntas, str):
+        # O Qwen3-4B às vezes devolve uma string solta em vez de lista — por
+        # exemplo, ecoando de volta o placeholder "Nenhum campo preenchido
+        # ainda." que aparece no prompt quando a demanda ainda está vazia
+        # (bug real observado: sem essa checagem, `for p in raw_perguntas`
+        # itera caractere a caractere e perguntas_de_negocio vira uma lista
+        # de letras soltas no briefing). Só aceita a string se ela já parecer
+        # uma pergunta direta de verdade — senão descarta como extração inválida.
+        raw_perguntas = [raw_perguntas] if _parece_pergunta_direta(raw_perguntas) else None
+
+    if raw_perguntas and not demanda.perguntas_de_negocio:
         demanda.perguntas_de_negocio = [
-            fp(p) for p in dados["perguntas_de_negocio"] if p
+            fp(p) for p in raw_perguntas if isinstance(p, str) and p.strip()
         ]
     # Se a última pergunta era sobre perguntas_de_negocio e o Qwen retornou lista
     # vazia, mas o texto do usuário já parece uma pergunta direta válida, usa o
