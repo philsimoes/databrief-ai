@@ -14,6 +14,7 @@ from schemas.models import (
 )
 from graph.agent import processar_turno, processar_selecao_checkbox
 from audio.transcricao import transcrever_audio
+from audio.sintese import sintetizar_texto
 from attachments.extracao import extrair_texto_anexo
 
 # ────────────────────────────────────────────────────────────
@@ -352,7 +353,7 @@ def confirmar_resultado(selecao, sessao_state, historico):
 
 def aprovar_briefing(sessao_state):
     if not sessao_state:
-        return None, gr.update(visible=False), "Nenhum briefing para aprovar."
+        return None, gr.update(visible=False), "Nenhum briefing para aprovar.", gr.update(visible=False)
     sessao  = SessionState.model_validate(sessao_state)
     demanda = sessao.demanda_ativa
     from schemas.models import BriefingOutput
@@ -372,7 +373,34 @@ def aprovar_briefing(sessao_state):
     caminho = f"/tmp/briefing_{briefing.id_demanda}.json"
     with open(caminho, "w", encoding="utf-8") as f:
         json.dump(dados, f, ensure_ascii=False, indent=2)
-    return caminho, gr.update(visible=True), "Briefing aprovado. Faça o download abaixo."
+    # Botão "Ouvir resumo" (TTS) só aparece depois da aprovação explícita —
+    # Piper nunca carrega antes disso (fluxo de aprovação humana do projeto).
+    return caminho, gr.update(visible=True), "Briefing aprovado. Faça o download abaixo.", gr.update(visible=True)
+
+
+def gerar_audio_resumo(sessao_state):
+    """Chamada quando o usuário clica em "Ouvir resumo" — só disponível depois
+    de aprovar o briefing. Sintetiza o resumo executivo (já gerado pelo Qwen
+    e mostrado ao usuário antes da aprovação) com o Piper TTS, que roda em
+    CPU e é carregado/liberado sob demanda, sem disputar VRAM com o Qwen.
+    """
+    if not sessao_state:
+        return gr.update(visible=False), "Nenhum briefing aprovado para sintetizar.", sessao_state
+    sessao  = SessionState.model_validate(sessao_state)
+    demanda = sessao.demanda_ativa
+    if not demanda or not demanda.resumo_executivo:
+        return gr.update(visible=False), "Resumo não disponível para este briefing.", sessao_state
+
+    try:
+        caminho_wav = f"/tmp/resumo_{demanda.id_demanda}.wav"
+        resultado = sintetizar_texto(demanda.resumo_executivo, caminho_wav)
+    except Exception as e:
+        return gr.update(visible=False), f"Não foi possível gerar o áudio: {e}", sessao_state
+
+    demanda.log_latencias["tts"] = resultado["latencia_s"]
+    sessao.demandas[sessao.indice_ativo] = demanda
+
+    return gr.update(value=caminho_wav, visible=True), "", sessao.model_dump(mode="json")
 
 
 def reiniciar(historico, sessao_state):
@@ -383,6 +411,7 @@ def reiniciar(historico, sessao_state):
         gr.update(visible=False), gr.update(visible=False),
         gr.update(visible=False), gr.update(visible=False),
         gr.update(value=[]), "",
+        gr.update(visible=False), gr.update(value=None, visible=False), "",
     )
 
 
@@ -579,6 +608,15 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             )
             status_aprovacao = gr.Markdown("")
 
+            # ── TTS — só aparece depois da aprovação ──────────
+            btn_ouvir_resumo = gr.Button(
+                "🔊 Ouvir resumo", size="sm", variant="secondary", visible=False
+            )
+            audio_resumo = gr.Audio(
+                label="Resumo em áudio", visible=False, autoplay=True
+            )
+            status_tts = gr.Markdown("")
+
         # ── Eventos ──────────────────────────────────────────
         msg_input.submit(
             fn=adicionar_mensagem_usuario,
@@ -689,7 +727,13 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         btn_aprovar.click(
             fn=aprovar_briefing,
             inputs=[sessao_state],
-            outputs=[arquivo_download, arquivo_download, status_aprovacao],
+            outputs=[arquivo_download, arquivo_download, status_aprovacao, btn_ouvir_resumo],
+        )
+
+        btn_ouvir_resumo.click(
+            fn=gerar_audio_resumo,
+            inputs=[sessao_state],
+            outputs=[audio_resumo, status_tts, sessao_state],
         )
 
         btn_reiniciar.click(
@@ -699,6 +743,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao, status_aprovacao,
+                btn_ouvir_resumo, audio_resumo, status_tts,
             ],
         )
 
