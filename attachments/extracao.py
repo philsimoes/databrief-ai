@@ -9,10 +9,14 @@
 import os
 import time
 
-# Cap de segurança — evita sobrecarregar o prompt de extração do Qwen com um
-# documento inteiro. O usuário revisa e pode editar/reduzir o texto antes de
-# enviar de qualquer forma, então isso só protege contra o caso extremo.
-LIMITE_CARACTERES = 6000
+# Cap de segurança — protege só contra o caso extremo (documento gigante por
+# engano), não é pensado pra cortar uso normal. O Qwen3-4B tem contexto de
+# 32 mil tokens nativamente, o que folga bastante pra 20 mil caracteres de
+# texto (cobre uma transcrição de reunião de uns 20-30 minutos). Corte
+# agressivo demais já causou problema antes (RAG, corte em 500 caracteres
+# cortou informação relevante que vinha depois) — por isso o limite alto
+# aqui. O usuário revisa e pode editar/reduzir o texto antes de enviar.
+LIMITE_CARACTERES = 20000
 
 EXTENSOES_SUPORTADAS = (".pdf", ".docx", ".txt")
 
