@@ -162,21 +162,27 @@ PERGUNTAS_FIXAS = {
 
 PROMPT_SUGERIR_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Com base no objetivo da demanda abaixo, sugira uma ou mais perguntas de
-negócio diretas e específicas que essa demanda deveria responder — o tipo de
-pergunta que uma análise, dashboard ou relatório deveria conseguir responder
-para quem pediu. Normalmente é só uma pergunta — sugira mais de uma somente
-se o objetivo deixar claro que há mais de uma questão de negócio distinta
-em jogo.
+Com base no objetivo da demanda abaixo, sugira pergunta(s) de negócio diretas
+e específicas que essa demanda deveria responder — o tipo de pergunta que uma
+análise, dashboard ou relatório deveria conseguir responder para quem pediu.
+
+Prefira fortemente sugerir só UMA pergunta. Só sugira mais de uma (no máximo
+3) se o objetivo mencionar explicitamente mais de um tema ou métrica
+claramente diferentes. NUNCA sugira várias reformulações da mesma pergunta —
+isso é um erro grave. Exemplo do que NÃO fazer (são a mesma pergunta com
+palavras diferentes):
+"Qual canal teve o maior crescimento de performance?"
+"Qual canal teve a melhor taxa de conversão?"
+"Qual canal teve o melhor ROI?"
 
 Objetivo da demanda: {objetivo}
 Contexto adicional: {contexto}
 
 Regras:
-- Uma pergunta por linha, cada uma terminando em "?".
+- No máximo 3 perguntas, uma por linha, cada uma terminando em "?".
 - Sem numeração, marcadores, explicações ou aspas — só as perguntas, uma por linha.
-- Específicas ao contexto — não repita o objetivo, traduza em perguntas que
-  os dados vão responder.
+- Cada pergunta precisa investigar um aspecto do negócio genuinamente
+  diferente das outras — nunca repita a mesma ideia com outras palavras.
 
 Perguntas sugeridas:"""
 
@@ -555,21 +561,31 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
             contexto=contexto,
         )
         t0 = time.time()
-        sugestao_raw, _ = chamar_qwen(prompt_sugestao, max_tokens=150)
+        sugestao_raw, _ = chamar_qwen(prompt_sugestao, max_tokens=200)
         latencia = time.time() - t0
 
-        # O Qwen pode sugerir mais de uma pergunta (uma por linha, conforme
-        # pedido no prompt) — usa a mesma heurística de aplicar_extracao pra
-        # filtrar só linhas que realmente parecem pergunta, descartando lixo
-        # como uma linha em branco ou uma frase de abertura que o Qwen tenha
-        # colado antes das perguntas.
+        # Duas defesas contra o Qwen3-4B não seguir bem a instrução do prompt
+        # (falha real observada em teste: pedido "normalmente só uma", mas o
+        # modelo devolveu 7 reformulações da mesma pergunta, e a última linha
+        # veio cortada pelo limite de tokens, sem "?", tipo "...maior variação
+        # de"). Mesmo padrão de duas camadas já usado em bloqueios/link_evidencia:
+        #
+        # 1) Só aceita linha que termina em "?" — diferente da heurística mais
+        #    frouxa de aplicar_extracao (_parece_pergunta_direta, que também
+        #    aceita começar com "qual/quais/..." sem "?", pensada pra texto
+        #    DIGITADO PELO USUÁRIO). Aqui estamos filtrando a própria geração
+        #    do Qwen, então uma linha cortada/incompleta não pode vazar pro
+        #    usuário como se fosse uma pergunta pronta.
         linhas = [l.strip().strip('"').strip("'").strip() for l in sugestao_raw.splitlines()]
-        perguntas_sugeridas = [l for l in linhas if _parece_pergunta_direta(l)]
+        perguntas_sugeridas = [l for l in linhas if l.endswith("?")]
         if not perguntas_sugeridas:
-            # Nada pareceu uma pergunta válida — melhor mostrar a resposta
-            # bruta do Qwen pro usuário editar do que devolver um campo vazio
+            # Nada terminou em "?" — melhor mostrar a resposta bruta do Qwen
+            # pro usuário editar do que devolver um campo vazio
             bruta = sugestao_raw.strip().strip('"').strip("'").strip()
             perguntas_sugeridas = [bruta] if bruta else []
+
+        # 2) Limite duro de 3 — não confia só no prompt para conter o modelo
+        perguntas_sugeridas = perguntas_sugeridas[:3]
 
         sugestao_texto = "\n".join(perguntas_sugeridas)
         mais_de_uma = len(perguntas_sugeridas) > 1
