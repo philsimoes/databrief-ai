@@ -174,6 +174,8 @@ class TurnInput(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     hash_conteudo: str = ""                # preenchido automaticamente no validator
     prompt_inicial_whisper: Optional[str] = None  # glossário de siglas para o ASR
+    nome_arquivo: Optional[str] = None     # nome do anexo, quando tipo == FILE —
+                                            # propagado ao FieldProvenance.arquivo
 
     @field_validator("hash_conteudo", mode="before")
     @classmethod
