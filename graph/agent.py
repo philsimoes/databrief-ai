@@ -556,6 +556,24 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     return state
 
 
+def _extrair_resumo_curto(texto_completo: str) -> str:
+    """
+    Extrai só o resumo executivo em linguagem natural do texto que o Qwen
+    gera em no_gerar_briefing — PROMPT_BRIEFING pede resumo (2-3 frases) E
+    a lista de campos formatada num único texto ("Campos Preenchidos:
+    **Tipo de Demanda:** ... **Objetivo:** ..."). Essa lista já aparece
+    visualmente no card do briefing — não faz sentido o TTS "ler" uma lista
+    burocrática de rótulo/valor em voz alta (fica longo e cheio de markdown).
+    Corta tudo a partir de "Campos Preenchidos" e mantém só o texto anterior.
+    Se o marcador não aparecer (Qwen formatou diferente), devolve o texto
+    inteiro — melhor ler tudo do que não ler nada.
+    """
+    match = re.search(r'campos\s+preenchidos', texto_completo, re.IGNORECASE)
+    if match:
+        return texto_completo[:match.start()].strip()
+    return texto_completo.strip()
+
+
 def no_gerar_briefing(state: GraphState) -> GraphState:
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
@@ -568,10 +586,11 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     latencia = time.time() - t0
 
     demanda.log_latencias[f"briefing_turno_{demanda.turno_atual}"] = latencia
-    # Guarda o resumo puro (sem o texto de completude/aprovação em volta) —
-    # o usuário já vê e implicitamente revisa esse texto antes de aprovar, e
+    # Guarda só a parte de resumo em linguagem natural (sem a lista de campos
+    # que vem em seguida, nem o texto de completude/aprovação em volta) — o
+    # usuário já vê e implicitamente revisa esse texto antes de aprovar, e
     # ele é reaproveitado depois pelo TTS (Piper) sem precisar gerar de novo.
-    demanda.resumo_executivo = resumo.strip()
+    demanda.resumo_executivo = _extrair_resumo_curto(resumo)
     briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao)
 
     sessao.demandas[sessao.indice_ativo] = demanda
