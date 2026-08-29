@@ -90,6 +90,10 @@ class GraphState(TypedDict):
     briefing_gerado: Optional[dict]
     aguardando_aprovacao: bool
     campo_prioritario_atual: str   # campo sendo perguntado — usado pela interface para mostrar componentes especiais
+    sugestao_pergunta_negocio: Optional[str]  # preenchido só quando campo_prioritario_atual
+                                               # == "perguntas_de_negocio" — pergunta candidata
+                                               # gerada pelo Qwen a partir do objetivo, mostrada
+                                               # num campo editável para o usuário confirmar
     erro: Optional[str]
 
 
@@ -145,19 +149,32 @@ PERGUNTAS_FIXAS = {
         "Essa demanda é uma Análise pontual, um Produto de Dados (dashboard ou agente), "
         "uma Estruturante (pipeline/tabela Gold) ou uma Alarmística (monitoramento com alertas)?"
     ),
-    "perguntas_de_negocio": (
-        "Quais perguntas essa demanda precisa responder? "
-        "Formule como perguntas diretas — por exemplo: 'Qual o índice de evasão por polo?' "
-        "ou 'Quais tutores têm menor tempo de resposta?'"
-    ),
-    "perguntas_de_negocio_reformular": (
-        "Preciso que sejam perguntas diretas, começando com 'Qual', 'Como', 'Quais' etc. "
-        "Por exemplo: 'Qual o tempo médio de resposta do tutor?' — como ficaria a sua?"
-    ),
     "titulo": (
         "Como você chamaria essa demanda? Pode ser um nome curto e descritivo."
     ),
 }
+# Nota: "perguntas_de_negocio" NÃO tem pergunta fixa — esse campo não é mais
+# perguntado em aberto no chat. Ver PROMPT_SUGERIR_PERGUNTA e o tratamento
+# especial em no_formular_pergunta: o agente sempre sugere uma pergunta
+# candidata (gerada a partir do objetivo) para o usuário confirmar/editar,
+# em vez de perguntar sempre a mesma coisa em texto livre.
+
+PROMPT_SUGERIR_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
+
+Com base no objetivo da demanda abaixo, sugira UMA pergunta de negócio direta
+e específica que essa demanda deveria responder — o tipo de pergunta que uma
+análise, dashboard ou relatório deveria conseguir responder para quem pediu.
+
+Objetivo da demanda: {objetivo}
+Contexto adicional: {contexto}
+
+Regras:
+- Uma frase só, terminando em "?".
+- Específica ao contexto — não repita o objetivo, traduza em uma pergunta
+  que os dados vão responder.
+- Não inclua explicações nem aspas, só a pergunta.
+
+Pergunta sugerida:"""
 
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
@@ -426,7 +443,7 @@ def no_extrair_campos(state: GraphState) -> GraphState:
     ultimo_turno = demanda.historico_turnos[-1]
 
     # Mensagens internas dos componentes visuais — estado já foi atualizado, pula Qwen
-    if ultimo_turno.conteudo in ("__checkbox__", "__radio__"):
+    if ultimo_turno.conteudo in ("__checkbox__", "__radio__", "__sugestao_pergunta__"):
         return state
 
     estado_atual = estado_para_texto(demanda)
@@ -520,6 +537,37 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
 
     # Separa campo prioritário dos demais
     campo_prioritario = vazios[0] if vazios else ""
+
+    # perguntas_de_negocio não é mais perguntado em aberto no chat (ver nota em
+    # PERGUNTAS_FIXAS acima). Em vez de perguntar, o agente sempre gera UMA
+    # pergunta de negócio candidata a partir do objetivo já informado e devolve
+    # em sugestao_pergunta_negocio — a interface mostra num campo editável para
+    # o usuário confirmar ou corrigir, em vez de repetir sempre a mesma pergunta
+    # fixa em texto livre (decisão tomada em conversa — ver ato2_decisoes.md).
+    if campo_prioritario == "perguntas_de_negocio":
+        objetivo_txt = demanda.objetivo.valor if demanda.objetivo else "não informado"
+        prompt_sugestao = PROMPT_SUGERIR_PERGUNTA.format(
+            objetivo=objetivo_txt,
+            contexto=contexto,
+        )
+        t0 = time.time()
+        sugestao, _ = chamar_qwen(prompt_sugestao, max_tokens=100)
+        latencia = time.time() - t0
+
+        # Remove aspas/espaços que o Qwen às vezes inclui em volta da pergunta
+        sugestao_limpa = sugestao.strip().strip('"').strip("'").strip()
+
+        demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
+        sessao.demandas[sessao.indice_ativo] = demanda
+        state["sessao"] = sessao
+        state["ultima_resposta_agente"] = (
+            "Com base no que você já me contou, sugiro essa pergunta de negócio "
+            "para essa demanda — edite se quiser e confirme abaixo:"
+        )
+        state["campo_prioritario_atual"] = campo_prioritario
+        state["sugestao_pergunta_negocio"] = sugestao_limpa
+        return state
+
     outros_campos = ", ".join(vazios[1:]) if len(vazios) > 1 else "nenhum"
 
     prompt = PROMPT_PERGUNTA.format(
@@ -528,20 +576,9 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         contexto=contexto
     )
 
-    # Detecta se deve pedir reformulação de perguntas_de_negocio
-    # Ocorre quando o campo prioritário é perguntas_de_negocio E a última pergunta
-    # já era sobre esse campo — significa que o usuário respondeu sem formato de pergunta
-    ultima_pergunta_sessao = getattr(sessao, "ultima_pergunta_agente", "") or ""
-    pedir_reformulacao = (
-        campo_prioritario == "perguntas_de_negocio"
-        and "perguntas" in ultima_pergunta_sessao.lower()
-        and not demanda.perguntas_de_negocio
-    )
-    chave_pergunta = "perguntas_de_negocio_reformular" if pedir_reformulacao else campo_prioritario
-
     # Usa pergunta fixa se disponível — mais confiável que o Qwen para campos com opções conhecidas
-    if chave_pergunta in PERGUNTAS_FIXAS:
-        pergunta = PERGUNTAS_FIXAS[chave_pergunta]
+    if campo_prioritario in PERGUNTAS_FIXAS:
+        pergunta = PERGUNTAS_FIXAS[campo_prioritario]
         latencia = 0.0
     else:
         t0 = time.time()
@@ -553,6 +590,7 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     state["sessao"] = sessao
     state["ultima_resposta_agente"] = pergunta.strip()
     state["campo_prioritario_atual"] = campo_prioritario
+    state["sugestao_pergunta_negocio"] = None
     return state
 
 
@@ -653,7 +691,8 @@ def construir_grafo():
 def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: TipoInput = TipoInput.TEXT, nome_arquivo: str = None) -> tuple:
     """
     Processa um turno completo: registra input, roda o grafo, retorna resposta.
-    Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None, campo_prioritario_atual)
+    Retorna: (sessao_atualizada, resposta_agente, briefing_ou_None,
+              campo_prioritario_atual, sugestao_pergunta_negocio)
 
     `tipo` identifica se o turno veio de texto digitado, áudio transcrito ou
     arquivo anexado (TipoInput.TEXT / AUDIO / FILE) — propagado ao TurnInput
@@ -663,6 +702,11 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: Tipo
 
     A última pergunta feita pelo agente é preservada em sessao.ultima_pergunta_agente
     e passada no estado do grafo para que no_extrair_campos possa contextualizá-la.
+
+    `sugestao_pergunta_negocio` só vem preenchida (str) quando
+    campo_prioritario_atual == "perguntas_de_negocio" — é a pergunta candidata
+    gerada pelo Qwen a partir do objetivo, para a interface mostrar num campo
+    editável em vez de perguntar em aberto no chat. Nos demais casos vem None.
     """
     demanda = sessao.demanda_ativa
     turno = TurnInput(conteudo=texto_usuario, tipo=tipo, nome_arquivo=nome_arquivo)
@@ -678,6 +722,7 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: Tipo
         "briefing_gerado": None,
         "aguardando_aprovacao": False,
         "campo_prioritario_atual": "",
+        "sugestao_pergunta_negocio": None,
         "erro": None,
     }
 
@@ -700,6 +745,7 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: Tipo
         resultado["ultima_resposta_agente"],
         resultado["briefing_gerado"],
         campo_prioritario,
+        resultado.get("sugestao_pergunta_negocio"),
     )
 
 
@@ -724,4 +770,31 @@ def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> Ses
         demanda.classificacao_estrategica = classificacoes
         sessao.demandas[sessao.indice_ativo] = demanda
 
+    return sessao
+
+
+def processar_confirmacao_pergunta_negocio(sessao: SessionState, texto_pergunta: str) -> SessionState:
+    """
+    Aplica a pergunta de negócio confirmada (a sugestão gerada pelo Qwen em
+    no_formular_pergunta, possivelmente editada pelo usuário) direto ao
+    estado. Chamada pela interface quando o usuário confirma o campo editável
+    de sugestão — não passa pelo Qwen de novo, o texto já está pronto.
+
+    origem=MANUAL porque, mesmo a sugestão tendo sido gerada pelo sistema, o
+    valor que efetivamente entra no briefing é sempre o que o usuário viu e
+    confirmou (ou editou) — mesmo critério já usado em confirmar_resultado
+    para resultado_esperado escolhido em componente visual.
+    """
+    demanda = sessao.demanda_ativa
+    if not demanda or not texto_pergunta or not texto_pergunta.strip():
+        return sessao
+
+    demanda.perguntas_de_negocio = [
+        FieldProvenance(
+            valor=texto_pergunta.strip(),
+            origem=OrigemCampo.MANUAL,
+            turno=demanda.turno_atual,
+        )
+    ]
+    sessao.demandas[sessao.indice_ativo] = demanda
     return sessao
