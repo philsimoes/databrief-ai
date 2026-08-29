@@ -126,7 +126,9 @@ Extraia apenas o que está explícito. Para cada campo, siga:
 - classificacao_estrategica: Lista. Valores permitidos:
   "Priorização", "Insight para Decisão", "Estruturante", "Eficiência Operacional",
   "Monitoramento", "Qualidade de Dados", "Evolução de Produto", "Disponibilização de Informação"
-- perguntas_de_negocio: Só se mencionado explicitamente.
+- perguntas_de_negocio: NÃO extraia esse campo. Ele é tratado à parte, sempre
+  sugerido pelo agente para confirmação do usuário — nunca preenchido direto
+  a partir do texto livre.
 
 Se a pergunta anterior era sobre um campo específico e a resposta é curta, associe ao campo:
   formato de entrega → resultado_esperado
@@ -284,12 +286,6 @@ def estado_para_texto(demanda: DemandState) -> str:
     return "\n".join(linhas) if linhas else "Nenhum campo preenchido ainda."
 
 
-_INICIOS_PERGUNTA = (
-    "qual", "quais", "quanto", "quantos", "quantas",
-    "como", "quando", "onde", "quem", "por que", "porque", "pra que", "o que",
-)
-
-
 _PADROES_SEM_RESPOSTA = (
     "não há", "nao ha", "não foi mencionado", "nao foi mencionado",
     "nenhum bloqueio", "nenhuma menção", "não mencionado", "nao mencionado",
@@ -313,21 +309,6 @@ def _parece_resposta_vazia(texto: str) -> bool:
     return any(t.startswith(p) or p in t for p in _PADROES_SEM_RESPOSTA)
 
 
-def _parece_pergunta_direta(texto: str) -> bool:
-    """Heurística leve: o texto termina com '?' ou começa com uma palavra
-    interrogativa comum. Usada como rede de segurança em aplicar_extracao —
-    o Qwen3-4B nem sempre extrai perguntas_de_negocio de forma confiável
-    mesmo quando o usuário já respondeu com uma pergunta direta válida
-    (falha observada em testes: mesma resposta, ora extrai ora não).
-    """
-    t = (texto or "").strip().lower()
-    if not t:
-        return False
-    if t.endswith("?"):
-        return True
-    return t.startswith(_INICIOS_PERGUNTA)
-
-
 def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergunta: str = "", turno_conteudo: str = "", origem: OrigemCampo = OrigemCampo.TEXT, nome_arquivo: str = None) -> DemandState:
     """Aplica os campos extraídos pelo Qwen ao estado da demanda.
 
@@ -342,38 +323,60 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         return FieldProvenance(valor=valor, origem=origem, turno=turno, arquivo=nome_arquivo)
 
     if dados.get("titulo") and not demanda.titulo:
-        demanda.titulo = fp(dados["titulo"])
+        # Mesma classe de bug já vista em resultado_esperado: o prompt pede
+        # "só se mencionado explicitamente", mas o Qwen3-4B às vezes preenche
+        # título mesmo assim, geralmente reformulando o objetivo (bug real
+        # observado: usuário nunca deu nome à demanda, e o campo veio
+        # preenchido com uma paráfrase do objetivo). Como título é texto
+        # livre, não dá pra validar contra uma lista fixa de palavras-chave
+        # como fizemos em resultado_esperado — em vez disso, só aceita
+        # quando a ÚLTIMA PERGUNTA DO AGENTE era de fato sobre título
+        # (ver PERGUNTAS_FIXAS["titulo"]: "Como você chamaria essa
+        # demanda?"). Isso garante que o valor só entra quando o usuário
+        # estava realmente respondendo sobre título, não quando o Qwen
+        # inventou por conta própria em qualquer outro turno.
+        PALAVRAS_PERGUNTA_TITULO = ("chamaria", "nome", "título", "titulo")
+        if any(p in ultima_pergunta.lower() for p in PALAVRAS_PERGUNTA_TITULO):
+            demanda.titulo = fp(dados["titulo"])
     if dados.get("objetivo") and not demanda.objetivo:
         demanda.objetivo = fp(dados["objetivo"])
     if dados.get("resultado_esperado") and not demanda.resultado_esperado:
-        # Aceita inferências óbvias de formato técnico — o usuário pode corrigir
-        # no briefing final antes de aprovar (badge de proveniência mostra origem)
-        FORMATOS_VALIDOS = {
-            "dashboard", "dashboard interativo", "agente", "agente automatizado",
-            "pipeline", "pipeline de dados", "tabela gold", "tabela", "modelo analítico",
-            "relatório automatizado via agente", "outro"
+        # Só aceita resultado_esperado se o texto ORIGINAL do usuário (não a
+        # extração do Qwen) contiver uma palavra-chave de formato explícita.
+        # O prompt já instrui "extraia APENAS se o usuário disse
+        # explicitamente dashboard/agente/tabela/pipeline", mas o Qwen3-4B
+        # não obedece essa instrução com confiabilidade — mesma classe de
+        # falha já vista em bloqueios/link_evidencia/perguntas_de_negocio.
+        # Bug real observado: usuário descreveu só o tema da demanda
+        # ("acompanhar a evolução da taxa de evasão... apresentar
+        # mensalmente"), sem citar formato nenhum, e o Qwen preencheu
+        # resultado_esperado como "Dashboard" mesmo assim — pulando
+        # silenciosamente a pergunta de Radio que deveria ter aparecido.
+        # A checagem antiga confiava em qualquer string que o Qwen
+        # devolvesse desde que "parecesse" um formato válido, sem nunca
+        # conferir contra o texto real do usuário; agora a fonte da verdade
+        # é sempre turno_conteudo, em qualquer turno (não só o primeiro).
+        PALAVRAS_FORMATO_EXPLICITO = {
+            "dashboard": "Dashboard interativo",
+            "painel": "Dashboard interativo",
+            "consolidar": "Dashboard interativo",
+            "pipeline": "Pipeline de dados",
+            "tabela gold": "Tabela Gold",
+            "modelo analítico": "Modelo analítico",
+            "agente automatizado": "Agente automatizado",
+            "agente": "Agente automatizado",
+            "chatbot": "Agente automatizado",
+            "conversar": "Agente automatizado",
+            "converse": "Agente automatizado",
+            "relatório automatizado": "Agente automatizado",
+            "e-mail": "Agente automatizado",
+            "alerta": "Agente automatizado",
         }
-        # Mapeamento de inferências óbvias — contexto deixa o formato claro
-        INFERENCIAS = {
-            "converse": "agente automatizado",
-            "conversar": "agente automatizado",
-            "chatbot": "agente automatizado",
-            "consolidar": "dashboard interativo",
-            "painel": "dashboard interativo",
-            "e-mail": "agente automatizado",
-            "alerta": "agente automatizado",
-        }
-        valor_lower = str(dados["resultado_esperado"]).lower().strip()
-        # Aceita se for formato válido direto
-        if any(fmt in valor_lower for fmt in FORMATOS_VALIDOS):
-            demanda.resultado_esperado = fp(dados["resultado_esperado"])
-        # Ou tenta inferir pelo contexto da primeira mensagem
-        elif not ultima_pergunta:  # só no primeiro turno, sem pergunta anterior
-            texto_lower = turno_conteudo.lower()
-            for chave, formato in INFERENCIAS.items():
-                if chave in texto_lower:
-                    demanda.resultado_esperado = fp(formato)
-                    break
+        texto_lower = turno_conteudo.lower()
+        for chave, formato in PALAVRAS_FORMATO_EXPLICITO.items():
+            if chave in texto_lower:
+                demanda.resultado_esperado = fp(formato)
+                break
     if (
         dados.get("bloqueios")
         and not demanda.bloqueios
@@ -409,32 +412,16 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         # Limita a 3 classificações — mais que isso indica inferência imprecisa do Qwen
         demanda.classificacao_estrategica = classificacoes[:3]
 
-    raw_perguntas = dados.get("perguntas_de_negocio")
-    if isinstance(raw_perguntas, str):
-        # O Qwen3-4B às vezes devolve uma string solta em vez de lista — por
-        # exemplo, ecoando de volta o placeholder "Nenhum campo preenchido
-        # ainda." que aparece no prompt quando a demanda ainda está vazia
-        # (bug real observado: sem essa checagem, `for p in raw_perguntas`
-        # itera caractere a caractere e perguntas_de_negocio vira uma lista
-        # de letras soltas no briefing). Só aceita a string se ela já parecer
-        # uma pergunta direta de verdade — senão descarta como extração inválida.
-        raw_perguntas = [raw_perguntas] if _parece_pergunta_direta(raw_perguntas) else None
-
-    if raw_perguntas and not demanda.perguntas_de_negocio:
-        demanda.perguntas_de_negocio = [
-            fp(p) for p in raw_perguntas if isinstance(p, str) and p.strip()
-        ]
-    # Se a última pergunta era sobre perguntas_de_negocio e o Qwen retornou lista
-    # vazia, mas o texto do usuário já parece uma pergunta direta válida, usa o
-    # texto bruto em vez de pedir reformulação à toa — evita o loop de "preciso
-    # que sejam perguntas diretas" quando o usuário já respondeu corretamente
-    # (a extração do Qwen3-4B falha esse campo com alguma frequência).
-    elif (
-        not demanda.perguntas_de_negocio
-        and "pergunta" in ultima_pergunta.lower()
-        and _parece_pergunta_direta(turno_conteudo)
-    ):
-        demanda.perguntas_de_negocio = [fp(turno_conteudo.strip())]
+    # perguntas_de_negocio NÃO é preenchido aqui. Bug real observado: o Qwen
+    # preenchia esse campo direto a partir do texto livre (turno 1, sem
+    # nenhuma pergunta ter sido feita sobre isso) — no caso do Phil, com o
+    # próprio texto do objetivo copiado, nem formatado como pergunta. Isso
+    # burlava silenciosamente a UI de sugestão/confirmação
+    # (processar_confirmacao_pergunta_negocio) que é o único caminho
+    # pretendido pra esse campo desde a mudança "sempre sugerida" — ver
+    # PROMPT_SUGERIR_PERGUNTA e no_formular_pergunta. Extração livre e UI de
+    # confirmação não podem coexistir pro mesmo campo: se a extração livre
+    # preenche primeiro, a UI nunca aparece e o usuário nunca aprova nada.
 
     return demanda
 
@@ -570,11 +557,10 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         # veio cortada pelo limite de tokens, sem "?", tipo "...maior variação
         # de"). Mesmo padrão de duas camadas já usado em bloqueios/link_evidencia:
         #
-        # 1) Só aceita linha que termina em "?" — diferente da heurística mais
-        #    frouxa de aplicar_extracao (_parece_pergunta_direta, que também
-        #    aceita começar com "qual/quais/..." sem "?", pensada pra texto
-        #    DIGITADO PELO USUÁRIO). Aqui estamos filtrando a própria geração
-        #    do Qwen, então uma linha cortada/incompleta não pode vazar pro
+        # 1) Só aceita linha que termina em "?" — checagem estrita, pensada
+        #    especificamente pra filtrar a própria geração do Qwen (que pode
+        #    vir cortada pelo limite de tokens), não o texto digitado pelo
+        #    usuário. Uma linha cortada/incompleta não pode vazar pro
         #    usuário como se fosse uma pergunta pronta.
         linhas = [l.strip().strip('"').strip("'").strip() for l in sugestao_raw.splitlines()]
         perguntas_sugeridas = [l for l in linhas if l.endswith("?")]
