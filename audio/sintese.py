@@ -9,13 +9,26 @@
 # ============================================================
 
 import os
+import re
 import time
 import wave
 from pathlib import Path
 
-# Voz padrão: pt_BR-faber-medium — única qualidade disponível para essa voz
-# no catálogo oficial do Piper (rhasspy/piper-voices), voz masculina única.
-VOZ_PADRAO = "pt_BR-faber-medium"
+# Voz padrão. Vozes pt_BR disponíveis no catálogo oficial do Piper
+# (rhasspy/piper-voices) e testadas/consideradas:
+#   pt_BR-faber-medium   — 22kHz, mas finetunada a partir de uma voz em
+#                          inglês (lessac); em teste real soou mais European
+#                          do que Brasileiro. NÃO é mais o padrão.
+#   pt_BR-edresson-low   — 16kHz (qualidade mais baixa), mas treinada sobre o
+#                          TTS-Portuguese-Corpus — corpus real de fala em
+#                          português brasileiro, gravado especificamente para
+#                          pesquisa de TTS em pt-BR. Escolhida como padrão:
+#                          prioriza sotaque correto sobre fidelidade de áudio.
+#   pt_BR-jeff-medium    — 22kHz, também finetunada de voz em inglês (lessac,
+#                          igual o faber) — mesma ressalva de sotaque do faber.
+# Se o sotaque do edresson ainda não ficar bom, troque esta constante por
+# "pt_BR-jeff-medium" como segunda tentativa.
+VOZ_PADRAO = "pt_BR-edresson-low"
 
 # Diretório onde o modelo de voz fica salvo entre sessões — dentro do Drive
 # montado pelo notebook, mesmo padrão usado pro corpus/índice (quando havia
@@ -54,6 +67,24 @@ def _garantir_voz_baixada(nome_voz: str, diretorio: str) -> tuple:
     return str(caminho_modelo), str(caminho_config)
 
 
+def _limpar_markdown(texto: str) -> str:
+    """
+    Remove marcações de markdown que o Piper lê literalmente em voz alta —
+    o Qwen formata o texto do resumo/briefing com **negrito**, headings,
+    listas com "-" etc. (pensado pra tela, não pra fala). Sem essa limpeza,
+    "**Campo:**" vira "asterisco asterisco Campo asterisco asterisco" no
+    áudio. Sanitização mecânica — não depende do Qwen se comportar bem.
+    """
+    t = texto
+    t = re.sub(r'\*\*(.*?)\*\*', r'\1', t)          # **negrito** → negrito
+    t = re.sub(r'\*(.*?)\*', r'\1', t)               # *itálico* → itálico
+    t = re.sub(r'^#{1,6}\s*', '', t, flags=re.MULTILINE)   # ## título → título
+    t = re.sub(r'^[\-\*•]\s+', '', t, flags=re.MULTILINE)  # - item → item
+    t = re.sub(r'`([^`]*)`', r'\1', t)               # `código` → código
+    t = re.sub(r'\s+', ' ', t).strip()               # espaços/quebras extras
+    return t
+
+
 def sintetizar_texto(
     texto: str,
     caminho_saida_wav: str,
@@ -83,6 +114,10 @@ def sintetizar_texto(
     if not texto or not texto.strip():
         raise ValueError("Texto vazio — nada para sintetizar.")
 
+    texto_limpo = _limpar_markdown(texto)
+    if not texto_limpo:
+        raise ValueError("Texto vazio depois de remover markdown — nada para sintetizar.")
+
     from piper import PiperVoice
 
     t0 = time.time()
@@ -91,7 +126,7 @@ def sintetizar_texto(
     voz = PiperVoice.load(caminho_modelo, config_path=caminho_config, use_cuda=False)
     try:
         with wave.open(caminho_saida_wav, "wb") as wav_file:
-            voz.synthesize_wav(texto, wav_file)
+            voz.synthesize_wav(texto_limpo, wav_file)
     finally:
         # Libera a voz da memória logo após o uso — não fica residente
         del voz
