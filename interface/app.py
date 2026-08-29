@@ -390,8 +390,13 @@ def confirmar_pergunta_negocio(texto, sessao_state, historico):
     sessao = SessionState.model_validate(sessao_state)
     sessao = processar_confirmacao_pergunta_negocio(sessao, texto)
 
+    # Uma linha do campo editável = uma pergunta — reflete no chat quantas
+    # perguntas foram de fato confirmadas (o usuário pode ter apagado ou
+    # adicionado linhas em relação à sugestão original)
+    linhas = [l.strip() for l in texto.splitlines() if l.strip()]
+    rotulo = "Perguntas de negócio" if len(linhas) > 1 else "Pergunta de negócio"
     historico = historico or []
-    historico.append({"role": "user", "content": f"Pergunta de negócio: {texto.strip()}"})
+    historico.append({"role": "user", "content": f"{rotulo}: " + " | ".join(linhas)})
 
     sessao, resposta, briefing, campo_atual, _ = processar_turno(agente, sessao, "__sugestao_pergunta__")
     historico.append({"role": "assistant", "content": resposta})
@@ -617,10 +622,13 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             # sempre sugere uma pergunta candidata (gerada a partir do
             # objetivo) e o usuário confirma ou edita aqui antes de seguir.
             with gr.Column(visible=False) as secao_sugestao_pergunta:
-                gr.Markdown("**Pergunta de negócio sugerida** — edite se quiser e confirme:")
-                editor_pergunta_negocio = gr.Textbox(lines=2, show_label=False)
+                gr.Markdown(
+                    "**Pergunta(s) de negócio sugerida(s)** — uma por linha; "
+                    "edite, apague ou adicione linhas e confirme:"
+                )
+                editor_pergunta_negocio = gr.Textbox(lines=3, show_label=False)
                 btn_confirmar_pergunta_negocio = gr.Button(
-                    "Confirmar pergunta", variant="primary", size="sm"
+                    "Confirmar pergunta(s)", variant="primary", size="sm"
                 )
 
             msg_input = gr.Textbox(
