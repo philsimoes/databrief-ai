@@ -91,9 +91,10 @@ class GraphState(TypedDict):
     aguardando_aprovacao: bool
     campo_prioritario_atual: str   # campo sendo perguntado — usado pela interface para mostrar componentes especiais
     sugestao_pergunta_negocio: Optional[str]  # preenchido só quando campo_prioritario_atual
-                                               # == "perguntas_de_negocio" — pergunta candidata
-                                               # gerada pelo Qwen a partir do objetivo, mostrada
-                                               # num campo editável para o usuário confirmar
+                                               # == "perguntas_de_negocio" — uma ou mais perguntas
+                                               # candidatas geradas pelo Qwen a partir do objetivo
+                                               # (uma por linha), mostradas num campo editável
+                                               # para o usuário confirmar/editar/completar
     erro: Optional[str]
 
 
@@ -161,20 +162,23 @@ PERGUNTAS_FIXAS = {
 
 PROMPT_SUGERIR_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
-Com base no objetivo da demanda abaixo, sugira UMA pergunta de negócio direta
-e específica que essa demanda deveria responder — o tipo de pergunta que uma
-análise, dashboard ou relatório deveria conseguir responder para quem pediu.
+Com base no objetivo da demanda abaixo, sugira uma ou mais perguntas de
+negócio diretas e específicas que essa demanda deveria responder — o tipo de
+pergunta que uma análise, dashboard ou relatório deveria conseguir responder
+para quem pediu. Normalmente é só uma pergunta — sugira mais de uma somente
+se o objetivo deixar claro que há mais de uma questão de negócio distinta
+em jogo.
 
 Objetivo da demanda: {objetivo}
 Contexto adicional: {contexto}
 
 Regras:
-- Uma frase só, terminando em "?".
-- Específica ao contexto — não repita o objetivo, traduza em uma pergunta
-  que os dados vão responder.
-- Não inclua explicações nem aspas, só a pergunta.
+- Uma pergunta por linha, cada uma terminando em "?".
+- Sem numeração, marcadores, explicações ou aspas — só as perguntas, uma por linha.
+- Específicas ao contexto — não repita o objetivo, traduza em perguntas que
+  os dados vão responder.
 
-Pergunta sugerida:"""
+Perguntas sugeridas:"""
 
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
@@ -551,21 +555,37 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
             contexto=contexto,
         )
         t0 = time.time()
-        sugestao, _ = chamar_qwen(prompt_sugestao, max_tokens=100)
+        sugestao_raw, _ = chamar_qwen(prompt_sugestao, max_tokens=150)
         latencia = time.time() - t0
 
-        # Remove aspas/espaços que o Qwen às vezes inclui em volta da pergunta
-        sugestao_limpa = sugestao.strip().strip('"').strip("'").strip()
+        # O Qwen pode sugerir mais de uma pergunta (uma por linha, conforme
+        # pedido no prompt) — usa a mesma heurística de aplicar_extracao pra
+        # filtrar só linhas que realmente parecem pergunta, descartando lixo
+        # como uma linha em branco ou uma frase de abertura que o Qwen tenha
+        # colado antes das perguntas.
+        linhas = [l.strip().strip('"').strip("'").strip() for l in sugestao_raw.splitlines()]
+        perguntas_sugeridas = [l for l in linhas if _parece_pergunta_direta(l)]
+        if not perguntas_sugeridas:
+            # Nada pareceu uma pergunta válida — melhor mostrar a resposta
+            # bruta do Qwen pro usuário editar do que devolver um campo vazio
+            bruta = sugestao_raw.strip().strip('"').strip("'").strip()
+            perguntas_sugeridas = [bruta] if bruta else []
+
+        sugestao_texto = "\n".join(perguntas_sugeridas)
+        mais_de_uma = len(perguntas_sugeridas) > 1
 
         demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
         sessao.demandas[sessao.indice_ativo] = demanda
         state["sessao"] = sessao
         state["ultima_resposta_agente"] = (
+            "Com base no que você já me contou, sugiro essas perguntas de negócio "
+            "para essa demanda — edite se quiser (uma por linha) e confirme abaixo:"
+            if mais_de_uma else
             "Com base no que você já me contou, sugiro essa pergunta de negócio "
             "para essa demanda — edite se quiser e confirme abaixo:"
         )
         state["campo_prioritario_atual"] = campo_prioritario
-        state["sugestao_pergunta_negocio"] = sugestao_limpa
+        state["sugestao_pergunta_negocio"] = sugestao_texto
         return state
 
     outros_campos = ", ".join(vazios[1:]) if len(vazios) > 1 else "nenhum"
@@ -775,10 +795,15 @@ def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> Ses
 
 def processar_confirmacao_pergunta_negocio(sessao: SessionState, texto_pergunta: str) -> SessionState:
     """
-    Aplica a pergunta de negócio confirmada (a sugestão gerada pelo Qwen em
-    no_formular_pergunta, possivelmente editada pelo usuário) direto ao
-    estado. Chamada pela interface quando o usuário confirma o campo editável
-    de sugestão — não passa pelo Qwen de novo, o texto já está pronto.
+    Aplica a(s) pergunta(s) de negócio confirmada(s) (a sugestão gerada pelo
+    Qwen em no_formular_pergunta, possivelmente editada/completada pelo
+    usuário) direto ao estado. Chamada pela interface quando o usuário
+    confirma o campo editável de sugestão — não passa pelo Qwen de novo, o
+    texto já está pronto.
+
+    Uma linha do campo editável = uma pergunta de negócio — o usuário pode
+    apagar, editar ou adicionar linhas antes de confirmar. Linhas em branco
+    são ignoradas.
 
     origem=MANUAL porque, mesmo a sugestão tendo sido gerada pelo sistema, o
     valor que efetivamente entra no briefing é sempre o que o usuário viu e
@@ -789,12 +814,13 @@ def processar_confirmacao_pergunta_negocio(sessao: SessionState, texto_pergunta:
     if not demanda or not texto_pergunta or not texto_pergunta.strip():
         return sessao
 
+    perguntas = [l.strip() for l in texto_pergunta.splitlines() if l.strip()]
+    if not perguntas:
+        return sessao
+
     demanda.perguntas_de_negocio = [
-        FieldProvenance(
-            valor=texto_pergunta.strip(),
-            origem=OrigemCampo.MANUAL,
-            turno=demanda.turno_atual,
-        )
+        FieldProvenance(valor=p, origem=OrigemCampo.MANUAL, turno=demanda.turno_atual)
+        for p in perguntas
     ]
     sessao.demandas[sessao.indice_ativo] = demanda
     return sessao
