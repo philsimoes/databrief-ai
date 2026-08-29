@@ -11,6 +11,7 @@
 import os
 import time
 import wave
+from pathlib import Path
 
 # Voz padrão: pt_BR-faber-medium — única qualidade disponível para essa voz
 # no catálogo oficial do Piper (rhasspy/piper-voices), voz masculina única.
@@ -39,14 +40,18 @@ def _garantir_voz_baixada(nome_voz: str, diretorio: str) -> tuple:
     """
     from piper.download_voices import download_voice
 
-    os.makedirs(diretorio, exist_ok=True)
-    caminho_modelo = os.path.join(diretorio, f"{nome_voz}.onnx")
-    caminho_config = os.path.join(diretorio, f"{nome_voz}.onnx.json")
+    # download_voice espera um pathlib.Path (usa o operador "/" internamente
+    # pra montar os caminhos) — passar uma string comum quebra com
+    # "unsupported operand type(s) for /: 'str' and 'str'".
+    diretorio_path = Path(diretorio)
+    diretorio_path.mkdir(parents=True, exist_ok=True)
+    caminho_modelo = diretorio_path / f"{nome_voz}.onnx"
+    caminho_config = diretorio_path / f"{nome_voz}.onnx.json"
 
-    if not (os.path.exists(caminho_modelo) and os.path.exists(caminho_config)):
-        download_voice(nome_voz, diretorio)
+    if not (caminho_modelo.exists() and caminho_config.exists()):
+        download_voice(nome_voz, diretorio_path)
 
-    return caminho_modelo, caminho_config
+    return str(caminho_modelo), str(caminho_config)
 
 
 def sintetizar_texto(
