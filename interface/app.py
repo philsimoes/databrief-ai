@@ -584,6 +584,14 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         with gr.Column(elem_classes=["chat-container"]):
             chatbot = gr.Chatbot(
                 value=[], height=430, show_label=False, layout="bubble",
+                type="messages",  # o histórico sempre foi montado como lista de
+                                  # dicts {"role": ..., "content": ...} em todo o
+                                  # código (adicionar_mensagem_usuario, processar_
+                                  # resposta, etc.) — isso É o formato "messages".
+                                  # Sem declarar explicitamente, o Gradio caía no
+                                  # padrão antigo "tuples" e quebrava ao receber
+                                  # uma mensagem em dict ("Data incompatible with
+                                  # tuples format").
                 placeholder=(
                     "**Olá! Sou o DataBrief AI.**\n\n"
                     "Descreva sua demanda de dados e vou ajudar a estruturá-la "
