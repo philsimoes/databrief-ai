@@ -206,12 +206,16 @@ def adicionar_mensagem_usuario(mensagem, historico):
     return historico, ""
 
 
-def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT", nome_arquivo=""):
+def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT", nome_arquivo="", mensagem_override=""):
     # Passo 2: processa e adiciona a resposta do agente
     # origem_mensagem: "TEXT" (digitado), "AUDIO" (transcrição confirmada) ou
     # "FILE" (texto de anexo confirmado) — define o TipoInput do turno,
     # propagado até o painel de proveniência. nome_arquivo só é usado quando
     # origem_mensagem == "FILE".
+    # mensagem_override: quando não vazio, é usado no lugar do texto que está
+    # no chat — necessário para o anexo, onde o chat mostra só um rótulo
+    # compacto (ex: "📎 arquivo.docx") mas o texto completo extraído precisa
+    # ir inteiro pro pipeline de extração de campos.
     _vazio = (historico, sessao_state,
               _barra_html(0, "Aguardando demanda"), "",
               gr.update(visible=False), gr.update(visible=False),
@@ -219,14 +223,17 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
               gr.update(value=[]), gr.update(visible=False), gr.update(value=None))
     if not historico:
         return _vazio
-    mensagem_raw = next(
-        (m["content"] for m in reversed(historico) if m["role"] == "user"), ""
-    )
-    # Gradio 6.x pode retornar content como lista de blocos
-    if isinstance(mensagem_raw, list):
-        mensagem = " ".join(b.get("text", "") for b in mensagem_raw if isinstance(b, dict))
+    if mensagem_override and mensagem_override.strip():
+        mensagem = mensagem_override
     else:
-        mensagem = str(mensagem_raw)
+        mensagem_raw = next(
+            (m["content"] for m in reversed(historico) if m["role"] == "user"), ""
+        )
+        # Gradio 6.x pode retornar content como lista de blocos
+        if isinstance(mensagem_raw, list):
+            mensagem = " ".join(b.get("text", "") for b in mensagem_raw if isinstance(b, dict))
+        else:
+            mensagem = str(mensagem_raw)
     if not mensagem.strip():
         return _vazio
 
@@ -427,15 +434,19 @@ def extrair_anexo_ui(caminho_arquivo):
     return gr.update(visible=True), texto, resultado["arquivo"]
 
 
-def enviar_anexo(texto_anexo, historico):
+def enviar_anexo(texto_anexo, historico, nome_arquivo):
     """Chamada quando o usuário confirma o texto extraído do anexo (já
-    revisado/editado) e ele entra no chat como se fosse uma mensagem digitada.
+    revisado/editado). O chat mostra só um rótulo compacto do arquivo — não o
+    texto inteiro, que pode ser bem longo — mas o texto completo é preservado
+    à parte (texto_anexo_pendente_state) para alimentar o pipeline de
+    extração de campos em processar_resposta.
     """
     if not texto_anexo or not texto_anexo.strip():
-        return historico, "", gr.update(visible=False)
+        return historico, "", gr.update(visible=False), ""
     historico = historico or []
-    historico.append({"role": "user", "content": texto_anexo})
-    return historico, "", gr.update(visible=False)
+    rotulo = f"📎 {nome_arquivo}" if nome_arquivo else "📎 documento anexado"
+    historico.append({"role": "user", "content": rotulo})
+    return historico, "", gr.update(visible=False), texto_anexo
 
 
 # ────────────────────────────────────────────────────────────
@@ -457,6 +468,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         sessao_state = gr.State({})
         origem_mensagem_state = gr.State("TEXT")
         nome_arquivo_state = gr.State("")
+        texto_anexo_pendente_state = gr.State("")
 
         # ── Cabeçalho ────────────────────────────────────────
         with gr.Row():
@@ -626,8 +638,8 @@ def construir_interface(agente_compilado) -> gr.Blocks:
 
         btn_confirmar_anexo.click(
             fn=enviar_anexo,
-            inputs=[editor_anexo, chatbot],
-            outputs=[chatbot, editor_anexo, secao_anexo],
+            inputs=[editor_anexo, chatbot, nome_arquivo_state],
+            outputs=[chatbot, editor_anexo, secao_anexo, texto_anexo_pendente_state],
         ).then(
             fn=lambda: None,
             outputs=[anexo_input],
@@ -636,7 +648,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[origem_mensagem_state],
         ).then(
             fn=processar_resposta,
-            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state, nome_arquivo_state],
+            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state, nome_arquivo_state, texto_anexo_pendente_state],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
