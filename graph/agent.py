@@ -18,7 +18,6 @@ from schemas.models import (
     ModoExecucao, BriefingOutput, ValorNegocio, ClassificacaoEstrategica,
     DEPENDE_SEMPRE_DE_ESTRUTURANTE, analise_depende_de_gold, ordenar_demandas
 )
-from rag.contexto import buscar_contexto
 
 # ────────────────────────────────────────────────────────────
 # REFERÊNCIAS GLOBAIS AO MODELO
@@ -39,32 +38,6 @@ def inicializar_modelo(model, tokenizer):
     _model = model
     _tokenizer = tokenizer
     print("✅ Modelo registrado no grafo")
-
-
-# ────────────────────────────────────────────────────────────
-# REFERÊNCIAS GLOBAIS AO RAG (Bloco 05b)
-# Preenchidas por inicializar_rag() antes de usar o grafo.
-# Se nunca forem inicializadas, o nó de busca de contexto simplesmente
-# não encontra nada e o briefing segue sem citações — não derruba o app.
-# ────────────────────────────────────────────────────────────
-
-_corpus_rag = None
-_indice_rag = None
-_modelo_embeddings_rag = None
-
-
-def inicializar_rag(corpus, indice, modelo_embeddings):
-    """
-    Recebe o corpus, o índice FAISS e o modelo de embeddings preparados
-    pela célula de setup do notebook (rag.ingestao.preparar_corpus_e_indice)
-    e os armazena para uso no nó de busca de contexto RAG.
-    Chamar uma vez, depois de montar o Drive e preparar o corpus.
-    """
-    global _corpus_rag, _indice_rag, _modelo_embeddings_rag
-    _corpus_rag = corpus
-    _indice_rag = indice
-    _modelo_embeddings_rag = modelo_embeddings
-    print(f"✅ RAG registrado no grafo ({len(corpus)} chunks)")
 
 
 # ────────────────────────────────────────────────────────────
@@ -536,55 +509,6 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     return state
 
 
-def no_buscar_contexto_rag(state: GraphState) -> GraphState:
-    """
-    Busca contexto de mercado no corpus RAG a partir do objetivo da demanda.
-    Roda uma única vez, quando a demanda fica pronta — não a cada turno,
-    porque o objetivo pode mudar até lá. Falha do RAG nunca derruba o
-    briefing: se não houver corpus carregado ou a busca falhar, o nó
-    simplesmente segue sem citações.
-    """
-    sessao = state["sessao"]
-    demanda = sessao.demanda_ativa
-
-    if demanda.contexto_rag:
-        return state  # já buscou pra essa demanda, não repete
-
-    if _indice_rag is None or _corpus_rag is None or _modelo_embeddings_rag is None:
-        return state  # RAG não inicializado — segue sem contexto
-
-    if not demanda.objetivo:
-        return state
-
-    try:
-        citacoes = buscar_contexto(
-            demanda.objetivo.valor,
-            _corpus_rag,
-            _indice_rag,
-            _modelo_embeddings_rag,
-            chamar_qwen,
-            k=5,
-        )
-    except Exception as e:
-        print(f"⚠️ Busca de contexto RAG falhou: {e}")
-        citacoes = []
-
-    demanda.contexto_rag = [
-        FieldProvenance(
-            valor=c["citacao"],
-            origem=OrigemCampo.RAG,
-            turno=demanda.turno_atual,
-            arquivo=c["fonte"],
-            trecho_rag=c["citacao"],
-        )
-        for c in citacoes
-    ]
-
-    sessao.demandas[sessao.indice_ativo] = demanda
-    state["sessao"] = sessao
-    return state
-
-
 def no_gerar_briefing(state: GraphState) -> GraphState:
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
@@ -602,21 +526,11 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     sessao.demandas[sessao.indice_ativo] = demanda
     state["sessao"] = sessao
     state["briefing_gerado"] = briefing.model_dump(mode="json")
-
-    mensagem = (
+    state["ultima_resposta_agente"] = (
         f"Briefing gerado! Aqui está o resumo:\n\n{resumo}\n\n"
         f"Completude: {briefing.completude:.0%}\n"
+        f"Aguardando sua aprovação para download."
     )
-
-    if briefing.fontes_rag:
-        linhas_fontes = "\n".join(
-            f"- {fp.arquivo} — {fp.valor}" for fp in briefing.fontes_rag
-        )
-        mensagem += f"\nContexto de mercado encontrado (RAG):\n{linhas_fontes}\n"
-
-    mensagem += "\nAguardando sua aprovação para download."
-
-    state["ultima_resposta_agente"] = mensagem
     state["aguardando_aprovacao"] = True
     return state
 
@@ -629,7 +543,7 @@ def rotear_apos_avaliacao(state: GraphState) -> str:
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
     if demanda.readiness == ReadinessStatus.PRONTA:
-        return "buscar_contexto_rag"
+        return "gerar_briefing"
     return "formular_pergunta"
 
 
@@ -639,23 +553,21 @@ def rotear_apos_avaliacao(state: GraphState) -> str:
 
 def construir_grafo():
     grafo = StateGraph(GraphState)
-    grafo.add_node("extrair_campos",      no_extrair_campos)
-    grafo.add_node("avaliar_completude",  no_avaliar_completude)
-    grafo.add_node("formular_pergunta",   no_formular_pergunta)
-    grafo.add_node("buscar_contexto_rag", no_buscar_contexto_rag)
-    grafo.add_node("gerar_briefing",      no_gerar_briefing)
+    grafo.add_node("extrair_campos",     no_extrair_campos)
+    grafo.add_node("avaliar_completude", no_avaliar_completude)
+    grafo.add_node("formular_pergunta",  no_formular_pergunta)
+    grafo.add_node("gerar_briefing",     no_gerar_briefing)
 
-    grafo.add_edge("extrair_campos",      "avaliar_completude")
-    grafo.add_edge("formular_pergunta",   END)
-    grafo.add_edge("buscar_contexto_rag", "gerar_briefing")
-    grafo.add_edge("gerar_briefing",      END)
+    grafo.add_edge("extrair_campos",    "avaliar_completude")
+    grafo.add_edge("formular_pergunta", END)
+    grafo.add_edge("gerar_briefing",    END)
 
     grafo.add_conditional_edges(
         "avaliar_completude",
         rotear_apos_avaliacao,
         {
-            "formular_pergunta":   "formular_pergunta",
-            "buscar_contexto_rag": "buscar_contexto_rag",
+            "formular_pergunta": "formular_pergunta",
+            "gerar_briefing":    "gerar_briefing",
         }
     )
 
