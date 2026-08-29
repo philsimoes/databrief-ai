@@ -12,7 +12,10 @@ from schemas.models import (
     SessionState, DemandState, ModoExecucao,
     ReadinessStatus, TipoDemanda, ClassificacaoEstrategica, TipoInput
 )
-from graph.agent import processar_turno, processar_selecao_checkbox
+from graph.agent import (
+    processar_turno, processar_selecao_checkbox,
+    processar_confirmacao_pergunta_negocio,
+)
 from audio.transcricao import transcrever_audio
 from audio.sintese import sintetizar_texto
 from attachments.extracao import extrair_texto_anexo
@@ -221,7 +224,8 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
               _barra_html(0, "Aguardando demanda"), "",
               gr.update(visible=False), gr.update(visible=False),
               gr.update(visible=False), gr.update(visible=False),
-              gr.update(value=[]), gr.update(visible=False), gr.update(value=None))
+              gr.update(value=[]), gr.update(visible=False), gr.update(value=None),
+              gr.update(visible=False), gr.update(value=""))
     if not historico:
         return _vazio
     if mensagem_override and mensagem_override.strip():
@@ -248,7 +252,7 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
 
     MAPA_TIPO_TURNO = {"AUDIO": TipoInput.AUDIO, "FILE": TipoInput.FILE}
     tipo_turno = MAPA_TIPO_TURNO.get(origem_mensagem, TipoInput.TEXT)
-    sessao, resposta, briefing, campo_atual = processar_turno(
+    sessao, resposta, briefing, campo_atual, sugestao_pergunta = processar_turno(
         agente, sessao, mensagem, tipo=tipo_turno, nome_arquivo=nome_arquivo or None
     )
     historico.append({"role": "assistant", "content": resposta})
@@ -258,6 +262,7 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
     briefing_html = renderizar_briefing_final(sessao) if pronto else ""
     pede_classificacao = campo_atual == "classificacao_estrategica"
     pede_resultado     = campo_atual == "resultado_esperado"
+    pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
         historico,
@@ -271,6 +276,8 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
         gr.update(value=[]),
         gr.update(visible=pede_resultado),
         gr.update(value=None),
+        gr.update(visible=pede_pergunta_negocio),
+        gr.update(value=sugestao_pergunta or ""),
     )
 
 
@@ -279,7 +286,15 @@ def confirmar_classificacao(selecoes, sessao_state, historico):
     Aplica a seleção e roda o grafo para formular a próxima pergunta.
     """
     if not selecoes or not sessao_state:
-        return historico, sessao_state, gr.update(visible=False), gr.update(visible=False)
+        # Mesma forma (10 valores) do retorno normal — o retorno anterior tinha
+        # só 4 valores, descasado com os 10 outputs do evento (bug: se o
+        # usuário clicasse "Confirmar seleção" sem marcar nada, o Gradio
+        # recebia menos valores do que o esperado).
+        return (historico, sessao_state,
+                gr.update(visible=False), gr.update(visible=False),
+                "", gr.update(visible=False), gr.update(visible=False),
+                _barra_html(0, "Aguardando demanda"),
+                gr.update(visible=False), gr.update(value=""))
 
     sessao = SessionState.model_validate(sessao_state)
     sessao = processar_selecao_checkbox(sessao, selecoes)
@@ -291,13 +306,16 @@ def confirmar_classificacao(selecoes, sessao_state, historico):
 
     # Roda o grafo com uma mensagem vazia para avançar para a próxima pergunta
     # O grafo vai avaliar o estado atualizado e formular o próximo campo
-    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, "__checkbox__")
+    sessao, resposta, briefing, campo_atual, sugestao_pergunta = processar_turno(agente, sessao, "__checkbox__")
 
     historico.append({"role": "assistant", "content": resposta})
 
     pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
     briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
     pede_classificacao = campo_atual == "classificacao_estrategica"
+    # classificacao_estrategica costuma ser seguida por perguntas_de_negocio na
+    # ordem de campos_vazios — precisa mostrar a caixa de sugestão se for o caso
+    pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
         historico,
@@ -308,6 +326,8 @@ def confirmar_classificacao(selecoes, sessao_state, historico):
         gr.update(visible=pronto),              # secao_briefing
         gr.update(visible=pronto),              # btn_aprovar
         renderizar_barra_progresso(sessao),     # barra atualizada
+        gr.update(visible=pede_pergunta_negocio),
+        gr.update(value=sugestao_pergunta or ""),
     )
 
 
@@ -318,7 +338,8 @@ def confirmar_resultado(selecao, sessao_state, historico):
     if not selecao or not sessao_state:
         return (historico, sessao_state, gr.update(visible=False), "",
                 gr.update(visible=False), gr.update(visible=False),
-                _barra_html(0, "Aguardando demanda"))
+                _barra_html(0, "Aguardando demanda"),
+                gr.update(visible=False), gr.update(value=""))
 
     from schemas.models import FieldProvenance, OrigemCampo
     sessao = SessionState.model_validate(sessao_state)
@@ -334,7 +355,45 @@ def confirmar_resultado(selecao, sessao_state, historico):
     historico = historico or []
     historico.append({"role": "user", "content": f"Resultado esperado: {selecao}"})
 
-    sessao, resposta, briefing, campo_atual = processar_turno(agente, sessao, "__radio__")
+    sessao, resposta, briefing, campo_atual, sugestao_pergunta = processar_turno(agente, sessao, "__radio__")
+    historico.append({"role": "assistant", "content": resposta})
+
+    pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
+    briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
+    # resultado_esperado costuma ser seguido por classificacao_estrategica, mas
+    # em alguns fluxos (ex.: campo inferido) pode cair direto em perguntas_de_negocio
+    pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
+
+    return (
+        historico,
+        sessao.model_dump(mode="json"),
+        gr.update(visible=False),
+        briefing_html_val,
+        gr.update(visible=pronto),
+        gr.update(visible=pronto),
+        renderizar_barra_progresso(sessao),
+        gr.update(visible=pede_pergunta_negocio),
+        gr.update(value=sugestao_pergunta or ""),
+    )
+
+
+def confirmar_pergunta_negocio(texto, sessao_state, historico):
+    """Chamada quando o usuário confirma (ou edita) a pergunta de negócio
+    sugerida pelo agente. Aplica direto ao estado — não passa pelo Qwen de
+    novo — e roda o grafo pra avançar pro próximo campo.
+    """
+    if not texto or not texto.strip() or not sessao_state:
+        return (historico, sessao_state, gr.update(visible=False), "",
+                gr.update(visible=False), gr.update(visible=False),
+                _barra_html(0, "Aguardando demanda"))
+
+    sessao = SessionState.model_validate(sessao_state)
+    sessao = processar_confirmacao_pergunta_negocio(sessao, texto)
+
+    historico = historico or []
+    historico.append({"role": "user", "content": f"Pergunta de negócio: {texto.strip()}"})
+
+    sessao, resposta, briefing, campo_atual, _ = processar_turno(agente, sessao, "__sugestao_pergunta__")
     historico.append({"role": "assistant", "content": resposta})
 
     pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
@@ -412,6 +471,7 @@ def reiniciar(historico, sessao_state):
         gr.update(visible=False), gr.update(visible=False),
         gr.update(value=[]), "",
         gr.update(visible=False), gr.update(value=None, visible=False), "",
+        gr.update(visible=False), gr.update(value=""),
     )
 
 
@@ -552,6 +612,17 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                     "Confirmar", variant="primary", size="sm"
                 )
 
+            # ── Sugestão de pergunta de negócio ───────────────
+            # perguntas_de_negocio não é mais perguntado em aberto: o agente
+            # sempre sugere uma pergunta candidata (gerada a partir do
+            # objetivo) e o usuário confirma ou edita aqui antes de seguir.
+            with gr.Column(visible=False) as secao_sugestao_pergunta:
+                gr.Markdown("**Pergunta de negócio sugerida** — edite se quiser e confirme:")
+                editor_pergunta_negocio = gr.Textbox(lines=2, show_label=False)
+                btn_confirmar_pergunta_negocio = gr.Button(
+                    "Confirmar pergunta", variant="primary", size="sm"
+                )
+
             msg_input = gr.Textbox(
                 placeholder="Descreva sua demanda...",
                 show_label=False, lines=1, max_lines=4, submit_btn=True,
@@ -633,6 +704,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
 
@@ -660,6 +732,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
 
@@ -692,6 +765,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
 
@@ -709,6 +783,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 briefing_html,
                 secao_briefing, btn_aprovar,
                 barra_progresso,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
 
@@ -718,6 +793,19 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[
                 chatbot, sessao_state,
                 secao_radio_resultado,
+                briefing_html,
+                secao_briefing, btn_aprovar,
+                barra_progresso,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
+            ],
+        )
+
+        btn_confirmar_pergunta_negocio.click(
+            fn=confirmar_pergunta_negocio,
+            inputs=[editor_pergunta_negocio, sessao_state, chatbot],
+            outputs=[
+                chatbot, sessao_state,
+                secao_sugestao_pergunta,
                 briefing_html,
                 secao_briefing, btn_aprovar,
                 barra_progresso,
@@ -744,6 +832,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_briefing, btn_aprovar, arquivo_download,
                 secao_checkbox, checkbox_classificacao, status_aprovacao,
                 btn_ouvir_resumo, audio_resumo, status_tts,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
 
