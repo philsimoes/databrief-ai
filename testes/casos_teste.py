@@ -21,10 +21,11 @@
 # bem as features do agente), só que com vocabulário e contexto de
 # negócio verdadeiros em vez de uma empresa genérica.
 #
-# Cada caso é rodado programaticamente por scripts/avaliar.py via
-# processar_turno(), turno a turno, sem interação manual no Gradio.
-# O script compara o DemandState resultante com "campos_esperados"
-# e a métrica de turnos-até-prontidão com "turnos_ate_pronta_esperado".
+# Cada caso é rodado programaticamente via processar_turno(), turno a
+# turno, sem interação manual no Gradio. Hoje isso é feito por
+# scripts/rodar_casos.py (runner manual, Bloco 10) — um relatório
+# campo a campo pra revisão humana, não o script de métricas completo
+# do item 3 do Ato 3 (F1, recall, latência etc.), que ainda não existe.
 #
 # Schema de cada caso:
 #   id                          — ex: "C001"
@@ -42,12 +43,18 @@
 #       os turnos acima serem processados (antes de qualquer resposta a
 #       perguntas de esclarecimento) — "pronta" só quando o caso já
 #       fornece todos os campos obrigatórios nos próprios turnos
-#   turnos_ate_pronta_esperado — int | None — só preenchido quando o
-#       caso é fechado (roteiro completo até PRONTA, incluindo eventuais
-#       respostas a perguntas fixas simuladas em turnos_fallback)
-#   turnos_fallback — respostas simuladas a perguntas de esclarecimento
-#       que o agente deve fazer (mesmo schema de "turnos"); usado só nos
-#       casos fechados
+#   respostas_por_campo — dict campo→texto, só presente nos casos "fechados"
+#       (a minoria, pensados pra chegar em PRONTA). O runner (scripts/
+#       rodar_casos.py) lê o campo_prioritario_atual que o agente devolve a
+#       cada turno e busca a resposta certa nesse dict — não é uma lista de
+#       turnos na ordem fixa, porque a ordem real depende de quanto o Qwen
+#       já extraiu do turno principal (não dá pra prever com certeza sem
+#       rodar ao vivo). O campo "perguntas_de_negocio" é tratado à parte
+#       pelo runner (nunca por texto livre — ver observação em C006) e não
+#       entra nesse dict.
+#   turnos_ate_pronta_esperado — int | None — só nos casos fechados; é uma
+#       ESTIMATIVA pro runner reportar lado a lado com o real, não uma
+#       asserção rígida (Qwen é não-determinístico turno a turno).
 #   observacoes — nota livre: bug/decisão de design que o caso documenta
 # ============================================================
 
@@ -67,7 +74,6 @@ CASOS = [
         "campos_esperados_apos_turnos": {},
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "objetivo pode ser inferido do texto, mas tipo_demanda fica None — este é o caso que motivou o Bloco 08 (Radio de tipo_demanda). Enfermagem citada de propósito: passou a ser exclusiva do presencial no novo marco regulatório, tema real e atual da YDUQS.",
     },
 
@@ -94,7 +100,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "tipo_demanda deve vir preenchido pelo Qwen (PROMPT_EXTRAIR mapeia 'dashboard' → Produto de Dados) sem precisar do Radio. Semipresencial é a modalidade que mais cresce na YDUQS (CAGR de 41% segundo a apresentação corporativa) — tema de peso real.",
     },
 
@@ -124,7 +129,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "bloqueios e link_evidencia são opcionais no schema — este caso confirma que, quando mencionados, entram com origem TEXT e não ficam de fora do briefing.",
     },
 
@@ -155,7 +159,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "resultado_esperado e perguntas_de_negocio ainda ficam pendentes — mede quantos dos 7 campos universais o Qwen extrai de um turno denso (métrica de recall por campo).",
     },
 
@@ -183,7 +186,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "campo crítico deste caso: resultado_esperado NÃO deve aparecer em campos_vazios() após este turno, mesmo sem ter sido dito explicitamente — é a regra de inferência documentada no docstring de campos_vazios().",
     },
 
@@ -202,13 +204,32 @@ CASOS = [
             "tipo_demanda": "Produto de Dados",
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
-        "turnos_ate_pronta_esperado": 4,
-        "turnos_fallback": [
-            {"tipo": "text", "conteudo": "Reduzir a queda de renovação identificando os padrões de não-renovação com 2 meses de antecedência."},
-            {"tipo": "text", "conteudo": "Tático, ligado a monitoramento."},
-            {"tipo": "text", "conteudo": "Quais motivos de não-renovação mais pesam? Existe correlação com o polo de origem do aluno?"},
-        ],
-        "observacoes": "bloqueios e link_evidencia devem ficar None no briefing final e NÃO devem contar como pendência — confirma que campos opcionais não bloqueiam readiness == PRONTA. Ibmec é segmento Premium, com 95% de taxa de renovação segundo a apresentação corporativa — bom cenário pra mostrar monitoramento de um indicador já forte.",
+        "turnos_ate_pronta_esperado": 6,
+        "respostas_por_campo": {
+            "objetivo": "O objetivo é entender por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula.",
+            # "relatório automatizado" (turno principal) não está na lista de gatilhos que o
+            # PROMPT_EXTRAIR dá ao Qwen pra resultado_esperado (dashboard/agente/tabela/pipeline)
+            # — testado com mock em 30/08: o campo NÃO veio preenchido automaticamente do turno
+            # principal, caiu mesmo na pergunta fixa. Resposta abaixo usa "agente automatizado",
+            # que É um gatilho explícito dos dois lados (PROMPT_EXTRAIR e PALAVRAS_FORMATO_EXPLICITO).
+            "resultado_esperado": "Um agente automatizado que envia o relatório mensalmente.",
+            "valor_negocio": "Tático.",
+            "classificacao_estrategica": "Monitoramento.",
+            "titulo": "Renovação de matrícula na pós-graduação do Ibmec",
+        },
+        "observacoes": (
+            "bloqueios e link_evidencia devem ficar None no briefing final e NÃO devem contar como pendência — "
+            "confirma que campos opcionais não bloqueiam readiness == PRONTA. Ibmec é segmento Premium, com 95% "
+            "de taxa de renovação segundo a apresentação corporativa — bom cenário pra mostrar monitoramento de "
+            "um indicador já forte. IMPORTANTE: perguntas_de_negocio NUNCA é preenchido por texto livre — "
+            "aplicar_extracao() ignora esse campo de propósito (ver comentário no próprio agent.py); o único "
+            "caminho é a sugestão gerada pelo Qwen a partir do objetivo (PROMPT_SUGERIR_PERGUNTA), confirmada via "
+            "processar_confirmacao_pergunta_negocio(). O runner (rodar_casos.py) trata isso automaticamente "
+            "quando campo_prioritario_atual == 'perguntas_de_negocio' — não entra em respostas_por_campo. "
+            "turnos_ate_pronta_esperado=5 é uma estimativa (1 principal + objetivo + valor_negocio+classificacao "
+            "em turnos separados + perguntas_de_negocio [automático] + titulo) — pode variar de verdade conforme "
+            "o Qwen agrupar ou não valor_negocio/classificacao_estrategica na mesma resposta."
+        ),
     },
 
     # ────────────────────────────────────────────────────────────
@@ -239,7 +260,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "campo extraído do anexo deve registrar origem=ATTACHMENT e arquivo='briefing_comercial_ibmec.docx' no FieldProvenance — confirma no painel de proveniência.",
     },
 
@@ -267,7 +287,6 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "no ambiente real este conteúdo viria de transcrever_audio(); aqui já entra como texto transcrito porque o script de avaliação não invoca o Whisper — o que se testa é o pipeline a partir da transcrição (origem=AUDIO, timestamp_audio setado).",
     },
 
@@ -295,8 +314,17 @@ CASOS = [
         },
         "readiness_esperado_apos_turnos": "esclarecimento",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
-        "observacoes": "espera-se 3 entradas em perguntas_de_negocio (uma por pergunta identificada), não uma string única concatenada — mede a qualidade de segmentação do Qwen nesta lista. Vagas adicionais de Medicina são um tema real de crescimento do IDOMED (alta taxa de aprovação nessas vagas, segundo a apresentação corporativa).",
+        "observacoes": (
+            "CORRIGIDO (era um erro no lote original): perguntas_de_negocio NUNCA é preenchido por extração de "
+            "texto livre — mesmo o usuário listando 3 perguntas aqui, esse campo continua vazio após este turno "
+            "(aplicar_extracao ignora esse campo de propósito). O objetivo deste caso não é testar extração de "
+            "lista — é confirmar que, mais adiante (fora deste 1º lote, quando o roteiro chegar em "
+            "campo_prioritario == 'perguntas_de_negocio'), a sugestão gerada pelo Qwen a partir do objetivo "
+            "capture bem esse contexto de 3 perguntas distintas já mencionadas — métrica de qualidade pra medir "
+            "no script de avaliação (item 3), não neste caso isolado. Vagas adicionais de Medicina são um tema "
+            "real de crescimento do IDOMED (alta taxa de aprovação nessas vagas, segundo a apresentação "
+            "corporativa)."
+        ),
     },
 
     # ────────────────────────────────────────────────────────────
@@ -313,7 +341,6 @@ CASOS = [
         "campos_esperados_apos_turnos": {},
         "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
-        "turnos_fallback": [],
         "observacoes": "nenhum campo obrigatório é extraível deste turno — confirma que o agente não força PRONTA nem trava, e que a pergunta seguinte é de descoberta (não uma das PERGUNTAS_FIXAS de campo específico).",
     },
 ]
