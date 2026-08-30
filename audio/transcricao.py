@@ -11,8 +11,18 @@ import gc
 import time
 import torch
 from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline as hf_pipeline
+from schemas.models import ModoExecucao
+from graph.agent import obter_modo_ativo
 
-MODELO_WHISPER = "openai/whisper-small"
+# Tamanho do Whisper por modo de execução — GPU_LOCAL usa Small (mais preciso,
+# GPU tem folga de VRAM); CPU_LOCAL usa Tiny (bem mais leve/rápido, essencial
+# rodando só em CPU); OPENAI usa Small (mesmo critério do GPU_LOCAL — a API
+# cobre só a geração de texto, a transcrição continua local).
+_MODELOS_WHISPER = {
+    ModoExecucao.GPU_LOCAL: "openai/whisper-small",
+    ModoExecucao.CPU_LOCAL: "openai/whisper-tiny",
+    ModoExecucao.OPENAI:    "openai/whisper-small",
+}
 
 
 def _vram():
@@ -24,27 +34,32 @@ def _vram():
     }
 
 
-def transcrever_audio(caminho_audio, idioma="portuguese", verbose=True):
+def transcrever_audio(caminho_audio, idioma="portuguese", verbose=True, modelo_whisper=None):
     """
-    Carrega o Whisper Small, transcreve o arquivo de áudio e libera a GPU
-    antes de retornar.
+    Carrega o Whisper (Small ou Tiny, conforme o modo de execução ativo),
+    transcreve o arquivo de áudio e libera a GPU antes de retornar.
 
     Args:
         caminho_audio: caminho do arquivo de áudio (mp3, m4a, wav etc.)
         idioma: idioma da transcrição
         verbose: se True, imprime VRAM e latência no console
+        modelo_whisper: força um modelo específico (ex.: para testes) — por
+            padrão usa o mapeamento por modo (_MODELOS_WHISPER), consultando
+            o modo realmente ativo via obter_modo_ativo() (nunca adivinhado)
 
     Returns:
         dict com "texto" (str) e "latencia_s" (float)
     """
     import librosa
 
+    modelo_whisper = modelo_whisper or _MODELOS_WHISPER[obter_modo_ativo()]
+
     t0 = time.time()
     tipo_dado = torch.float16 if torch.cuda.is_available() else torch.float32
 
-    processor = AutoProcessor.from_pretrained(MODELO_WHISPER)
+    processor = AutoProcessor.from_pretrained(modelo_whisper)
     modelo = AutoModelForSpeechSeq2Seq.from_pretrained(
-        MODELO_WHISPER, torch_dtype=tipo_dado, low_cpu_mem_usage=True, use_safetensors=True
+        modelo_whisper, torch_dtype=tipo_dado, low_cpu_mem_usage=True, use_safetensors=True
     ).to("cuda" if torch.cuda.is_available() else "cpu")
 
     transcrevedor = hf_pipeline(
@@ -54,7 +69,7 @@ def transcrever_audio(caminho_audio, idioma="portuguese", verbose=True):
     )
     if verbose:
         v = _vram()
-        print(f"📊 [Whisper carregado] {v['alocada_gb']} GB alocados | {v['livre_gb']} GB livres")
+        print(f"📊 [Whisper carregado: {modelo_whisper}] {v['alocada_gb']} GB alocados | {v['livre_gb']} GB livres")
 
     audio, sr = librosa.load(caminho_audio, sr=16000)
     resultado = transcrevedor(audio, generate_kwargs={"language": idioma})
