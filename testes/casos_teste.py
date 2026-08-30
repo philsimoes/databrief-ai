@@ -38,11 +38,29 @@
 #   campos_esperados_apos_turnos — valores que devem estar preenchidos
 #       SOMENTE a partir dos turnos acima (antes de qualquer pergunta de
 #       fallback do agente) — usa os .value dos enums, como aparecem no
-#       briefing final
+#       briefing final.
+#       IMPORTANTE (achado do 1º teste ao vivo, 30/08, caso C004): NUNCA
+#       coloque "titulo" aqui. Igual a perguntas_de_negocio, titulo tem uma
+#       guarda anti-alucinação em aplicar_extracao() (graph/agent.py) que só
+#       aceita o valor quando a ÚLTIMA PERGUNTA DO AGENTE continha
+#       "chamaria"/"nome"/"título"/"titulo" — ou seja, só depois que
+#       PERGUNTAS_FIXAS["titulo"] já foi feita. Nos turnos principais (antes
+#       de qualquer pergunta do agente) essa condição nunca é satisfeita,
+#       então titulo SEMPRE vem None nesse ponto — não importa o quão
+#       explícito o texto do usuário seja (ex: "Título: X." logo no início).
+#       Só cabe em campos_esperados_apos_turnos depois de um turno de
+#       resposta que veio logo após essa pergunta específica (ou, nos casos
+#       fechados, dentro de respostas_por_campo — ver C006).
 #   readiness_esperado_apos_turnos — ReadinessStatus esperado logo após
 #       os turnos acima serem processados (antes de qualquer resposta a
 #       perguntas de esclarecimento) — "pronta" só quando o caso já
-#       fornece todos os campos obrigatórios nos próprios turnos
+#       fornece todos os campos obrigatórios nos próprios turnos.
+#       IMPORTANTE (achado do 1º teste ao vivo, 30/08): no_avaliar_completude()
+#       em graph/agent.py só atribui ReadinessStatus.PRONTA ou .DISCOVERY —
+#       .ESCLARECIMENTO existe no enum (schemas/models.py) mas NUNCA é
+#       atribuído em lugar nenhum do grafo hoje. Todo caso aberto (que não
+#       chega em PRONTA) sempre reporta "discovery", nunca "esclarecimento" —
+#       por isso é o único valor usado abaixo além de "pronta".
 #   respostas_por_campo — dict campo→texto, só presente nos casos "fechados"
 #       (a minoria, pensados pra chegar em PRONTA). O runner (scripts/
 #       rodar_casos.py) lê o campo_prioritario_atual que o agente devolve a
@@ -72,7 +90,7 @@ CASOS = [
             {"tipo": "text", "conteudo": "Preciso entender melhor a evasão de alunos no curso de Enfermagem da Estácio."},
         ],
         "campos_esperados_apos_turnos": {},
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "objetivo pode ser inferido do texto, mas tipo_demanda fica None — este é o caso que motivou o Bloco 08 (Radio de tipo_demanda). Enfermagem citada de propósito: passou a ser exclusiva do presencial no novo marco regulatório, tema real e atual da YDUQS.",
     },
@@ -98,7 +116,7 @@ CASOS = [
             "tipo_demanda": "Produto de Dados",
             "objetivo": "acompanhar a captação do Semipresencial por polo de EaD",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "tipo_demanda deve vir preenchido pelo Qwen (PROMPT_EXTRAIR mapeia 'dashboard' → Produto de Dados) sem precisar do Radio. Semipresencial é a modalidade que mais cresce na YDUQS (CAGR de 41% segundo a apresentação corporativa) — tema de peso real.",
     },
@@ -127,7 +145,7 @@ CASOS = [
             "bloqueios": "depende da liberação de acesso da equipe de Engenharia",
             "link_evidencia": "https://chamados.yduqs.com.br/TICKET-4521",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "bloqueios e link_evidencia são opcionais no schema — este caso confirma que, quando mencionados, entram com origem TEXT e não ficam de fora do briefing.",
     },
@@ -152,14 +170,22 @@ CASOS = [
             },
         ],
         "campos_esperados_apos_turnos": {
-            "titulo": "Alerta de evasão no Digital",
             "tipo_demanda": "Alarmística",
             "valor_negocio": "Tático",
             "classificacao_estrategica": ["Eficiência Operacional"],
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
-        "observacoes": "resultado_esperado e perguntas_de_negocio ainda ficam pendentes — mede quantos dos 7 campos universais o Qwen extrai de um turno denso (métrica de recall por campo).",
+        "observacoes": (
+            "resultado_esperado e perguntas_de_negocio ainda ficam pendentes — mede quantos "
+            "dos 7 campos universais o Qwen extrai de um turno denso (métrica de recall por "
+            "campo). titulo NÃO entra em campos_esperados_apos_turnos mesmo vindo explícito "
+            "logo no início do texto ('Título: Alerta de evasão no Digital.') — achado do 1º "
+            "teste ao vivo (30/08): a guarda anti-alucinação de titulo em aplicar_extracao() só "
+            "aceita o valor depois que o agente já perguntou especificamente sobre título (ver "
+            "nota no cabeçalho deste arquivo); titulo sempre vem None neste checkpoint, por "
+            "design, não por falha do Qwen."
+        ),
     },
 
     # ────────────────────────────────────────────────────────────
@@ -184,7 +210,7 @@ CASOS = [
             "tipo_demanda": "Análise",
             "objetivo": "comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "campo crítico deste caso: resultado_esperado NÃO deve aparecer em campos_vazios() após este turno, mesmo sem ter sido dito explicitamente — é a regra de inferência documentada no docstring de campos_vazios().",
     },
@@ -203,7 +229,7 @@ CASOS = [
         "campos_esperados_apos_turnos": {
             "tipo_demanda": "Produto de Dados",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": 6,
         "respostas_por_campo": {
             "objetivo": "O objetivo é entender por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula.",
@@ -258,7 +284,7 @@ CASOS = [
             "tipo_demanda": "Análise",
             "objetivo": "mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "campo extraído do anexo deve registrar origem=ATTACHMENT e arquivo='briefing_comercial_ibmec.docx' no FieldProvenance — confirma no painel de proveniência.",
     },
@@ -285,7 +311,7 @@ CASOS = [
             "tipo_demanda": "Produto de Dados",
             "objetivo": "acompanhar em tempo real a fila da Central de Relacionamento do aluno",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": "no ambiente real este conteúdo viria de transcrever_audio(); aqui já entra como texto transcrito porque o script de avaliação não invoca o Whisper — o que se testa é o pipeline a partir da transcrição (origem=AUDIO, timestamp_audio setado).",
     },
@@ -312,7 +338,7 @@ CASOS = [
         "campos_esperados_apos_turnos": {
             "tipo_demanda": "Análise",
         },
-        "readiness_esperado_apos_turnos": "esclarecimento",
+        "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
         "observacoes": (
             "CORRIGIDO (era um erro no lote original): perguntas_de_negocio NUNCA é preenchido por extração de "
