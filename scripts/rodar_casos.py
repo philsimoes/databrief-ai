@@ -1,14 +1,26 @@
 # ============================================================
 # scripts/rodar_casos.py
-# DataBrief AI — Ato 3, Bloco 10: runner manual dos casos de teste
+# DataBrief AI — Ato 3, Bloco 13: runner manual dos casos de teste
+# (com captura de latência pra comparação entre modos)
 #
 # NÃO é o script de avaliação completo do item 3 do Ato 3 (F1 por
-# campo, recall de lacunas, latência P50/P95 etc. — isso ainda não
+# campo, recall de lacunas, concordância humana etc. — isso ainda não
 # foi construído). Isso aqui é um runner enxuto pra rodar os casos
 # de `testes/casos_teste.py` contra o agente já carregado na sessão
 # do Colab e mostrar o que foi extraído campo a campo, pra revisão
 # manual (a mesma lógica de "concordância humana" que o projeto já
 # pede como métrica, só que feita à mão por enquanto).
+#
+# Bloco 13 (novo): cada execução agora captura tempo total por caso
+# e reaproveita demanda.log_latencias (já existente em graph/agent.py,
+# preenchido por chamar_llm em cada etapa — extração/pergunta/briefing)
+# pra montar um resumo de latência por etapa e por modo. No final,
+# grava um JSON em resultados/execucoes/ com tudo isso, já rotulado
+# com o modo de execução ativo (CPU_LOCAL / GPU_LOCAL / OPENAI) e um
+# timestamp — pra depois dar pra comparar dois arquivos (um de cada
+# modo) numericamente, em vez de só lembrar "essa rodada pareceu mais
+# rápida". Isso adianta parte do item 3 do Ato 3 (latência P50/P95 por
+# etapa e por modo), mas ainda não é o script de avaliação final.
 #
 # Como rodar no Colab: depois da Célula 3 (grafo carregado e modelo
 # registrado via inicializar_modelo) — NÃO precisa da Célula 4/Gradio
@@ -22,8 +34,18 @@
 # ser import + chamada de função, na mesma sessão do kernel.
 # ============================================================
 
+import json
+import os
+import time
+from datetime import datetime
+
 from schemas.models import SessionState, DemandState, TipoInput, ReadinessStatus
-from graph.agent import construir_grafo, processar_turno, processar_confirmacao_pergunta_negocio
+from graph.agent import (
+    construir_grafo,
+    processar_turno,
+    processar_confirmacao_pergunta_negocio,
+    obter_modo_ativo,
+)
 
 from testes.casos_teste import CASOS
 
@@ -39,6 +61,8 @@ _CAMPOS_BARE_LISTA_ENUM = {"classificacao_estrategica"}
 # Campos wrapeados em FieldProvenance — precisa pegar .valor
 _CAMPOS_PROVENANCE_TEXTO = {"titulo", "objetivo", "resultado_esperado", "bloqueios", "link_evidencia"}
 _CAMPOS_PROVENANCE_LISTA = {"perguntas_de_negocio"}
+
+_DIR_RESULTADOS = os.path.join("resultados", "execucoes")
 
 
 def _valor_campo(demanda: DemandState, nome_campo: str):
@@ -59,10 +83,25 @@ def _valor_campo(demanda: DemandState, nome_campo: str):
     return bruto
 
 
+def _percentil(valores: list, p: float) -> float:
+    """Percentil por interpolação linear, sem depender de numpy (não dá
+    pra garantir que tá instalado em toda sessão do Colab)."""
+    if not valores:
+        return 0.0
+    ordenado = sorted(valores)
+    if len(ordenado) == 1:
+        return ordenado[0]
+    k = (len(ordenado) - 1) * (p / 100)
+    piso = int(k)
+    teto = min(piso + 1, len(ordenado) - 1)
+    if piso == teto:
+        return ordenado[piso]
+    return ordenado[piso] + (ordenado[teto] - ordenado[piso]) * (k - piso)
+
+
 def _nova_sessao_teste() -> SessionState:
     """Sessão isolada por caso — mesmo padrão de nova_sessao() do
     interface/app.py, sem depender da UI."""
-    from graph.agent import obter_modo_ativo
     sessao = SessionState(modo_execucao=obter_modo_ativo())
     sessao.adicionar_demanda(DemandState())
     return sessao
@@ -143,11 +182,17 @@ def _fechar_caso(agente, sessao: SessionState, campo_atual: str, sugestao_pergun
 def rodar_caso(agente, caso: dict) -> dict:
     """Roda um caso (turnos principais + fechamento dinâmico, se houver)
     e monta um relatório campo a campo pra revisão manual. Não derruba o
-    lote inteiro se um caso der erro — registra e segue pro próximo."""
+    lote inteiro se um caso der erro — registra e segue pro próximo.
+
+    Também mede o tempo total do caso (wall-clock) e recolhe
+    demanda.log_latencias (já existente em graph/agent.py, uma entrada por
+    chamada ao LLM) pra permitir comparação de desempenho entre modos."""
     print(f"\n{'=' * 60}")
     print(f"{caso['id']} — {caso['categoria']}")
     print(f"  {caso['descricao']}")
     print("=" * 60)
+
+    t_inicio_caso = time.time()
 
     try:
         sessao = _nova_sessao_teste()
@@ -175,6 +220,7 @@ def rodar_caso(agente, caso: dict) -> dict:
 
         # ── caso fechado: continua dinamicamente até PRONTA ──
         respostas_por_campo = caso.get("respostas_por_campo")
+        motivo_parada = None
         if respostas_por_campo:
             sessao, turnos_extra, motivo_parada = _fechar_caso(
                 agente, sessao, campo_atual, sugestao_pergunta, respostas_por_campo
@@ -189,33 +235,127 @@ def rodar_caso(agente, caso: dict) -> dict:
                 print(f"\n  ✅ PRONTA em {turno_final} turnos "
                       f"(estimativa do caso: {caso.get('turnos_ate_pronta_esperado')})")
 
-        return {"id": caso["id"], "erro": None}
+        duracao_caso = time.time() - t_inicio_caso
+        log_latencias = dict(demanda.log_latencias)
+        n_chamadas = len(log_latencias)
+        print(f"\n  ⏱  tempo total do caso: {duracao_caso:.1f}s "
+              f"({n_chamadas} chamada(s) ao LLM, "
+              f"média {duracao_caso / n_chamadas if n_chamadas else 0:.1f}s/chamada)")
+
+        return {
+            "id": caso["id"],
+            "erro": None,
+            "duracao_caso_s": round(duracao_caso, 2),
+            "log_latencias": log_latencias,
+            "motivo_nao_pronta": motivo_parada,
+        }
 
     except Exception as e:
+        duracao_caso = time.time() - t_inicio_caso
         print(f"\n  💥 ERRO ao rodar este caso: {type(e).__name__}: {e}")
-        return {"id": caso["id"], "erro": str(e)}
+        return {
+            "id": caso["id"],
+            "erro": str(e),
+            "duracao_caso_s": round(duracao_caso, 2),
+            "log_latencias": {},
+            "motivo_nao_pronta": None,
+        }
 
 
-def rodar_todos(casos: list = None) -> list:
+def _resumo_latencias(relatorios: list) -> dict:
+    """Agrupa log_latencias de todos os casos por etapa (extracao/pergunta/
+    briefing — o prefixo antes de '_turno_N' em cada chave) e calcula
+    contagem, média, P50 e P95 de cada grupo, além do agregado geral."""
+    por_etapa = {}
+    for r in relatorios:
+        for chave, valor in r["log_latencias"].items():
+            etapa = chave.split("_turno_")[0]
+            por_etapa.setdefault(etapa, []).append(valor)
+
+    resumo = {}
+    todos_valores = []
+    for etapa, valores in por_etapa.items():
+        todos_valores.extend(valores)
+        resumo[etapa] = {
+            "n": len(valores),
+            "media_s": round(sum(valores) / len(valores), 2),
+            "p50_s": round(_percentil(valores, 50), 2),
+            "p95_s": round(_percentil(valores, 95), 2),
+        }
+    resumo["_geral"] = {
+        "n": len(todos_valores),
+        "media_s": round(sum(todos_valores) / len(todos_valores), 2) if todos_valores else 0.0,
+        "p50_s": round(_percentil(todos_valores, 50), 2),
+        "p95_s": round(_percentil(todos_valores, 95), 2),
+    }
+    return resumo
+
+
+def rodar_todos(casos: list = None, salvar_json: bool = True) -> list:
     """Roda todos os casos de CASOS (ou uma lista passada) e imprime um
-    resumo no final. Constrói o grafo uma vez só (barato — só monta o
-    StateGraph, não recarrega nenhum modelo)."""
+    resumo no final, incluindo latência por etapa e por modo de execução.
+    Constrói o grafo uma vez só (barato — só monta o StateGraph, não
+    recarrega nenhum modelo).
+
+    Se salvar_json=True (padrão), grava um resumo estruturado em
+    resultados/execucoes/<modo>_<timestamp>.json — pensado pra depois
+    comparar numericamente uma rodada em CPU_LOCAL com uma em GPU_LOCAL
+    (ou OPENAI), sem depender de guardar a saída impressa do Colab."""
     casos = casos if casos is not None else CASOS
+    modo = obter_modo_ativo()
+    print(f"Modo de execução ativo: {modo.value}")
+    print(f"Rodando {len(casos)} caso(s)...")
+
     agente = construir_grafo()
 
+    t_inicio_lote = time.time()
     relatorios = [rodar_caso(agente, caso) for caso in casos]
+    duracao_lote = time.time() - t_inicio_lote
+
+    resumo_latencias = _resumo_latencias(relatorios)
 
     print(f"\n{'=' * 60}")
     print("RESUMO")
     print("=" * 60)
     com_erro = [r for r in relatorios if r["erro"]]
+    print(f"Modo: {modo.value}")
     print(f"{len(relatorios)} casos rodados, {len(com_erro)} com erro de execução.")
+    print(f"Tempo total do lote: {duracao_lote:.1f}s ({duracao_lote / 60:.1f}min)")
     if com_erro:
         for r in com_erro:
             print(f"  ❌ {r['id']}: {r['erro']}")
+
+    print("\nLatência por etapa (segundos, agregado de todos os casos):")
+    for etapa, stats in resumo_latencias.items():
+        if etapa == "_geral":
+            continue
+        print(f"  {etapa}: n={stats['n']}  média={stats['media_s']}s  "
+              f"p50={stats['p50_s']}s  p95={stats['p95_s']}s")
+    geral = resumo_latencias["_geral"]
+    print(f"  TOTAL (todas as etapas): n={geral['n']}  média={geral['media_s']}s  "
+          f"p50={geral['p50_s']}s  p95={geral['p95_s']}s")
+
     print("\nNota: os campos de texto livre (titulo/objetivo/resultado_esperado/"
           "bloqueios/link_evidencia) precisam de revisão manual — o marcador "
           "🔍/✅ acima é só uma dica, não veredito.")
+
+    if salvar_json:
+        os.makedirs(_DIR_RESULTADOS, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        caminho = os.path.join(_DIR_RESULTADOS, f"{modo.value}_{timestamp}.json")
+        conteudo = {
+            "modo": modo.value,
+            "timestamp": timestamp,
+            "n_casos": len(relatorios),
+            "n_erros": len(com_erro),
+            "duracao_lote_s": round(duracao_lote, 2),
+            "resumo_latencias": resumo_latencias,
+            "casos": relatorios,
+        }
+        with open(caminho, "w", encoding="utf-8") as f:
+            json.dump(conteudo, f, ensure_ascii=False, indent=2)
+        print(f"\n💾 resultado salvo em {caminho} — commite esse arquivo pra guardar "
+              f"o histórico e poder comparar com outras rodadas (outros modos) depois.")
 
     return relatorios
 
