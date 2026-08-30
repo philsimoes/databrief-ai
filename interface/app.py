@@ -35,6 +35,18 @@ OPCOES_RESULTADO = [
     "Outro",
 ]
 
+# tipo_demanda ganhou Radio (Bloco 07) pelo mesmo motivo que resultado_esperado
+# e classificacao_estrategica já tinham: campo com opções fixas conhecidas —
+# não faz sentido depender do Qwen classificar corretamente em texto livre,
+# principalmente em modos com modelo menor (CPU_LOCAL). Valores idênticos aos
+# do enum TipoDemanda — TipoDemanda(selecao) precisa bater exatamente.
+OPCOES_TIPO_DEMANDA = [
+    "Análise",
+    "Produto de Dados",
+    "Estruturante",
+    "Alarmística",
+]
+
 # ────────────────────────────────────────────────────────────
 # ESTADO GLOBAL DA SESSÃO
 # ────────────────────────────────────────────────────────────
@@ -262,8 +274,9 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
     barra_html    = renderizar_barra_progresso(sessao)
     pronto        = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
     briefing_html = renderizar_briefing_final(sessao) if pronto else ""
-    pede_classificacao = campo_atual == "classificacao_estrategica"
-    pede_resultado     = campo_atual == "resultado_esperado"
+    pede_tipo           = campo_atual == "tipo_demanda"
+    pede_classificacao  = campo_atual == "classificacao_estrategica"
+    pede_resultado      = campo_atual == "resultado_esperado"
     pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
@@ -274,6 +287,65 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
         gr.update(visible=pronto),
         gr.update(visible=pronto),
         gr.update(visible=False),
+        gr.update(visible=pede_tipo),
+        gr.update(value=None),
+        gr.update(visible=pede_classificacao),
+        gr.update(value=[]),
+        gr.update(visible=pede_resultado),
+        gr.update(value=None),
+        gr.update(visible=pede_pergunta_negocio),
+        gr.update(value=sugestao_pergunta or ""),
+    )
+
+
+def confirmar_tipo_demanda(selecao, sessao_state, historico):
+    """Chamada quando o usuário confirma o Radio de tipo_demanda (Bloco 07).
+    Aplica o valor direto ao estado e avança o grafo.
+
+    Nota: tipo_demanda NÃO é wrapeado em FieldProvenance — é um campo enum
+    direto em DemandState (mesmo padrão já usado em aplicar_extracao, linha
+    onde a extração faz TipoDemanda(dados["tipo_demanda"])), diferente de
+    resultado_esperado/titulo/valor_negocio que carregam origem/turno.
+    """
+    if not selecao or not sessao_state:
+        return (historico, sessao_state,
+                gr.update(visible=False), "",
+                gr.update(visible=False), gr.update(visible=False),
+                _barra_html(0, "Aguardando demanda"),
+                gr.update(visible=False), gr.update(value=[]),
+                gr.update(visible=False), gr.update(value=None),
+                gr.update(visible=False), gr.update(value=""))
+
+    sessao = SessionState.model_validate(sessao_state)
+    demanda = sessao.demanda_ativa
+
+    demanda.tipo_demanda = TipoDemanda(selecao)
+    sessao.demandas[sessao.indice_ativo] = demanda
+
+    historico = historico or []
+    historico.append({"role": "user", "content": f"Tipo de demanda: {selecao}"})
+
+    sessao, resposta, briefing, campo_atual, sugestao_pergunta = processar_turno(agente, sessao, "__radio__")
+    historico.append({"role": "assistant", "content": resposta})
+
+    pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
+    briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
+    # tipo_demanda é o primeiro campo na ordem de campos_vazios — como o
+    # turno inicial pode ter preenchido vários campos de uma vez (objetivo,
+    # resultado_esperado por palavra-chave, etc.), o próximo campo prioritário
+    # pode ser qualquer um dos três com widget dedicado, não só um.
+    pede_classificacao = campo_atual == "classificacao_estrategica"
+    pede_resultado = campo_atual == "resultado_esperado"
+    pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
+
+    return (
+        historico,
+        sessao.model_dump(mode="json"),
+        gr.update(visible=False),
+        briefing_html_val,
+        gr.update(visible=pronto),
+        gr.update(visible=pronto),
+        renderizar_barra_progresso(sessao),
         gr.update(visible=pede_classificacao),
         gr.update(value=[]),
         gr.update(visible=pede_resultado),
@@ -610,6 +682,22 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 ),
             )
 
+            # ── Radio — tipo_demanda (Bloco 07) ───────────────
+            # Primeiro campo perguntado na ordem de campos_vazios. Ganhou
+            # widget dedicado depois de uma extração real falhar em CPU_LOCAL
+            # (Qwen3-1.7B não classificou "dashboard" como Produto de Dados
+            # mesmo com a palavra-chave explícita no texto do usuário).
+            with gr.Column(visible=False) as secao_radio_tipo:
+                gr.Markdown("**Que tipo de demanda é essa?**")
+                radio_tipo = gr.Radio(
+                    choices=OPCOES_TIPO_DEMANDA,
+                    label="",
+                    show_label=False,
+                )
+                btn_confirmar_tipo = gr.Button(
+                    "Confirmar", variant="primary", size="sm"
+                )
+
             # ── CheckboxGroup — classificacao_estrategica ─────
             # Visível apenas quando o agente pede esse campo
             # Fica acima da caixa de texto para aparecer próximo ao chat
@@ -728,6 +816,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
+                secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
@@ -756,6 +845,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
+                secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
@@ -789,6 +879,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
+                secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
@@ -798,6 +889,21 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         btn_descartar_anexo.click(
             fn=lambda: ("", gr.update(visible=False), None, ""),
             outputs=[editor_anexo, secao_anexo, anexo_input, nome_arquivo_state],
+        )
+
+        btn_confirmar_tipo.click(
+            fn=confirmar_tipo_demanda,
+            inputs=[radio_tipo, sessao_state, chatbot],
+            outputs=[
+                chatbot, sessao_state,
+                secao_radio_tipo,
+                briefing_html,
+                secao_briefing, btn_aprovar,
+                barra_progresso,
+                secao_checkbox, checkbox_classificacao,
+                secao_radio_resultado, radio_resultado,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
+            ],
         )
 
         btn_confirmar_classificacao.click(
