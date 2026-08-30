@@ -1,0 +1,236 @@
+Modo de execução ativo: GPU_LOCAL
+Rodando 10 caso(s)...
+
+============================================================
+C001 — tema_sem_formato
+  Demanda menciona só o tema (evasão), sem indicar formato de entrega — deve pedir tipo_demanda via Radio
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+
+  ⏱  tempo total do caso: 22.2s (2 chamada(s) ao LLM, média 11.1s/chamada)
+
+============================================================
+C002 — formato_explicito
+  Demanda pede um dashboard de forma explícita, com objetivo e público-alvo claros
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Produto de Dados'
+      obtido:   'Produto de Dados'
+    objetivo: 🔍 revisar
+      esperado: 'acompanhar a captação do Semipresencial por polo de EaD'
+      obtido:   'monitorar a captação do Semipresencial por polo de EaD'
+
+  ⏱  tempo total do caso: 14.5s (2 chamada(s) ao LLM, média 7.3s/chamada)
+
+============================================================
+C003 — bloqueio_e_link_mencionados
+  Demanda Estruturante já cita um bloqueio (dependência de outra área) e um link de evidência
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Estruturante'
+      obtido:   'Estruturante'
+    bloqueios: ✅ (aparenta bater)
+      esperado: 'depende da liberação de acesso da equipe de Engenharia'
+      obtido:   'Depende da liberação de acesso da equipe de Engenharia'
+    link_evidencia: ✅ (aparenta bater)
+      esperado: 'https://chamados.yduqs.com.br/TICKET-4521'
+      obtido:   'https://chamados.yduqs.com.br/TICKET-4521'
+
+  ⏱  tempo total do caso: 18.4s (2 chamada(s) ao LLM, média 9.2s/chamada)
+
+============================================================
+C004 — extracao_rica_um_turno
+  Demanda Alarmística com quase todos os campos universais descritos em um único turno
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Alarmística'
+      obtido:   'Alarmística'
+    valor_negocio: ❌
+      esperado: 'Tático'
+      obtido:   'Operacional'
+    classificacao_estrategica: ✅
+      esperado: ['Eficiência Operacional']
+      obtido:   ['Eficiência Operacional', 'Monitoramento']
+
+  ⏱  tempo total do caso: 11.8s (2 chamada(s) ao LLM, média 5.9s/chamada)
+
+============================================================
+C005 — inferencia_analise_resultado_esperado
+  Demanda de Análise com objetivo claro — resultado_esperado deve ser inferido automaticamente, sem pergunta extra
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Análise'
+      obtido:   'Análise'
+    objetivo: 🔍 revisar
+      esperado: 'comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial'
+      obtido:   'Comparar a taxa de conversão do funil de captação entre Semipresencial e Presencial em Estácio & Wyden nos últimos 6 meses'
+
+  ⏱  tempo total do caso: 15.4s (2 chamada(s) ao LLM, média 7.7s/chamada)
+
+============================================================
+C006 — fechado_sem_campos_opcionais
+  Roteiro completo até PRONTA sem nunca mencionar bloqueios ou link de evidência
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Produto de Dados'
+      obtido:   'Produto de Dados'
+
+  ⚠️  não chegou em PRONTA: limite de segurança (8 turnos) atingido sem chegar em PRONTA — campo_prioritario_atual parado em 'titulo'
+  pendências restantes: ['titulo']
+
+  ⏱  tempo total do caso: 69.4s (17 chamada(s) ao LLM, média 4.1s/chamada)
+
+============================================================
+C007 — anexo_longo
+  Demanda enviada em texto curto + um anexo longo que traz o objetivo detalhado
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Análise'
+      obtido:   'Análise'
+    objetivo: ✅ (aparenta bater)
+      esperado: 'mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção'
+      obtido:   'mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção'
+
+  ⏱  tempo total do caso: 24.0s (4 chamada(s) ao LLM, média 6.0s/chamada)
+
+============================================================
+C008 — turno_audio
+  Demanda enviada por áudio (transcrição simulada, como se o Whisper já tivesse rodado)
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ❌
+      esperado: 'Produto de Dados'
+      obtido:   'Alarmística'
+    objetivo: 🔍 revisar
+      esperado: 'acompanhar em tempo real a fila da Central de Relacionamento do aluno'
+      obtido:   'Monitorar em tempo real a fila da Central de Relacionamento do aluno da Estácio e verificar se o tempo médio de espera está dentro da meta'
+
+  ⏱  tempo total do caso: 14.1s (2 chamada(s) ao LLM, média 7.1s/chamada)
+
+============================================================
+C009 — multiplas_perguntas_negocio
+  Usuário já traz várias perguntas de negócio no mesmo turno em vez de uma só
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+    tipo_demanda: ✅
+      esperado: 'Análise'
+      obtido:   'Análise'
+
+  ⏱  tempo total do caso: 19.6s (2 chamada(s) ao LLM, média 9.8s/chamada)
+
+============================================================
+C010 — demanda_vaga_total
+  Pedido inicial sem tema, sem formato, sem contexto — deve cair em discovery e não travar
+============================================================
+
+  readiness após turnos principais: discovery  (esperado: discovery)
+
+  ⏱  tempo total do caso: 8.1s (2 chamada(s) ao LLM, média 4.0s/chamada)
+
+============================================================
+RESUMO
+============================================================
+Modo: GPU_LOCAL
+10 casos rodados, 0 com erro de execução.
+Tempo total do lote: 217.6s (3.6min)
+
+Latência por etapa (segundos, agregado de todos os casos):
+  extracao: n=18  média=9.75s  p50=8.29s  p95=16.65s
+  pergunta: n=19  média=2.21s  p50=0.0s  p95=7.34s
+  TOTAL (todas as etapas): n=37  média=5.88s  p50=7.19s  p95=13.16s
+
+Nota: os campos de texto livre (titulo/objetivo/resultado_esperado/bloqueios/link_evidencia) precisam de revisão manual — o marcador 🔍/✅ acima é só uma dica, não veredito.
+
+💾 resultado salvo em resultados/execucoes/GPU_LOCAL_20260830_230634.json — commite esse arquivo pra guardar o histórico e poder comparar com outras rodadas (outros modos) depois.
+[{'id': 'C001',
+  'erro': None,
+  'duracao_caso_s': 22.21,
+  'log_latencias': {'extracao_turno_1': 16.951923847198486,
+   'pergunta_turno_1': 5.219895362854004},
+  'motivo_nao_pronta': None},
+ {'id': 'C002',
+  'erro': None,
+  'duracao_caso_s': 14.52,
+  'log_latencias': {'extracao_turno_1': 8.69487476348877,
+   'pergunta_turno_1': 5.82574462890625},
+  'motivo_nao_pronta': None},
+ {'id': 'C003',
+  'erro': None,
+  'duracao_caso_s': 18.37,
+  'log_latencias': {'extracao_turno_1': 16.5973801612854,
+   'pergunta_turno_1': 1.7708320617675781},
+  'motivo_nao_pronta': None},
+ {'id': 'C004',
+  'erro': None,
+  'duracao_caso_s': 11.82,
+  'log_latencias': {'extracao_turno_1': 9.984126806259155,
+   'pergunta_turno_1': 1.8309776782989502},
+  'motivo_nao_pronta': None},
+ {'id': 'C005',
+  'erro': None,
+  'duracao_caso_s': 15.43,
+  'log_latencias': {'extracao_turno_1': 12.058459997177124,
+   'pergunta_turno_1': 3.3673202991485596},
+  'motivo_nao_pronta': None},
+ {'id': 'C006',
+  'erro': None,
+  'duracao_caso_s': 69.41,
+  'log_latencias': {'extracao_turno_1': 8.485394954681396,
+   'pergunta_turno_1': 7.457414388656616,
+   'pergunta_turno_2': 0.0,
+   'extracao_turno_3': 7.4690821170806885,
+   'pergunta_turno_3': 0.0,
+   'extracao_turno_4': 8.10397458076477,
+   'pergunta_turno_4': 0.0,
+   'extracao_turno_5': 7.943540096282959,
+   'pergunta_turno_5': 0.0,
+   'extracao_turno_6': 7.190549850463867,
+   'pergunta_turno_6': 0.0,
+   'extracao_turno_7': 7.859113693237305,
+   'pergunta_turno_7': 0.0,
+   'extracao_turno_8': 7.192660570144653,
+   'pergunta_turno_8': 0.0,
+   'extracao_turno_9': 7.684009552001953,
+   'pergunta_turno_9': 0.0},
+  'motivo_nao_pronta': "limite de segurança (8 turnos) atingido sem chegar em PRONTA — campo_prioritario_atual parado em 'titulo'"},
+ {'id': 'C007',
+  'erro': None,
+  'duracao_caso_s': 24.02,
+  'log_latencias': {'extracao_turno_1': 6.324261426925659,
+   'pergunta_turno_1': 0.0,
+   'extracao_turno_2': 10.75480341911316,
+   'pergunta_turno_2': 6.9309656620025635},
+  'motivo_nao_pronta': None},
+ {'id': 'C008',
+  'erro': None,
+  'duracao_caso_s': 14.1,
+  'log_latencias': {'extracao_turno_1': 11.78754448890686,
+   'pergunta_turno_1': 2.3116886615753174},
+  'motivo_nao_pronta': None},
+ {'id': 'C009',
+  'erro': None,
+  'duracao_caso_s': 19.62,
+  'log_latencias': {'extracao_turno_1': 12.296388149261475,
+   'pergunta_turno_1': 7.322368860244751},
+  'motivo_nao_pronta': None},
+ {'id': 'C010',
+  'erro': None,
+  'duracao_caso_s': 8.06,
+  'log_latencias': {'extracao_turno_1': 8.056698560714722,
+   'pergunta_turno_1': 0.0},
+  'motivo_nao_pronta': None}]
