@@ -391,6 +391,28 @@ _PADROES_SEM_RESPOSTA = (
 )
 
 
+def _normalizar_texto_campo(valor) -> str:
+    """Bug real visto ao vivo (Ato 3, Bloco 12, Qwen3-1.7B/CPU_LOCAL): pra
+    campos que deveriam ser um texto único (bloqueios, link_evidencia), o
+    Qwen às vezes devolve uma LISTA em vez de string — observado quando o
+    usuário menciona bloqueio E link no mesmo turno (ex.: ["depende da
+    liberação de acesso..."] em vez de "depende da liberação de acesso...").
+    Sem essa normalização, _parece_resposta_vazia() quebra com
+    AttributeError: 'list' object has no attribute 'strip' — um crash real,
+    não um fallback silencioso, mas ainda assim quebra o turno inteiro.
+    Junta os itens da lista num texto só; qualquer outro tipo inesperado
+    (dict, número) vira string via str() — nunca deixa passar adiante algo
+    que não seja str.
+    """
+    if isinstance(valor, list):
+        return "; ".join(str(v) for v in valor if v)
+    if valor is None:
+        return ""
+    if isinstance(valor, str):
+        return valor
+    return str(valor)
+
+
 def _parece_resposta_vazia(texto: str) -> bool:
     """Heurística leve: detecta quando o Qwen preenche um campo opcional
     (bloqueios, link_evidencia) com uma frase de "não há nada aqui" em vez de
@@ -399,7 +421,10 @@ def _parece_resposta_vazia(texto: str) -> bool:
     "não há bloqueios mencionados" entra no briefing como se fosse um dado
     real extraído do usuário/anexo, com badge de proveniência e tudo.
     """
-    t = (texto or "").strip().lower()
+    # str(...) aqui é rede de segurança extra — a normalização real acontece
+    # em aplicar_extracao() via _normalizar_texto_campo(), antes de chegar
+    # aqui, mas essa função pode ganhar outros chamadores no futuro.
+    t = str(texto or "").strip().lower()
     if not t:
         return True
     return any(t.startswith(p) or p in t for p in _PADROES_SEM_RESPOSTA)
@@ -473,18 +498,14 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
             if chave in texto_lower:
                 demanda.resultado_esperado = fp(formato)
                 break
-    if (
-        dados.get("bloqueios")
-        and not demanda.bloqueios
-        and not _parece_resposta_vazia(dados["bloqueios"])
-    ):
-        demanda.bloqueios = fp(dados["bloqueios"])
-    if (
-        dados.get("link_evidencia")
-        and not demanda.link_evidencia
-        and not _parece_resposta_vazia(dados["link_evidencia"])
-    ):
-        demanda.link_evidencia = fp(dados["link_evidencia"])
+    if dados.get("bloqueios") and not demanda.bloqueios:
+        bloqueios_txt = _normalizar_texto_campo(dados["bloqueios"])
+        if not _parece_resposta_vazia(bloqueios_txt):
+            demanda.bloqueios = fp(bloqueios_txt)
+    if dados.get("link_evidencia") and not demanda.link_evidencia:
+        link_txt = _normalizar_texto_campo(dados["link_evidencia"])
+        if not _parece_resposta_vazia(link_txt):
+            demanda.link_evidencia = fp(link_txt)
 
     if dados.get("tipo_demanda") and not demanda.tipo_demanda:
         try:
