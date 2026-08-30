@@ -42,7 +42,7 @@ _ROTULOS_MODO = {
 }
 
 
-def inicializar_modelo(model, tokenizer, modo: ModoExecucao = ModoExecucao.GPU_LOCAL):
+def inicializar_modelo(model, tokenizer, modo: ModoExecucao):
     """
     Registra o modo de execução ativo desta sessão e, para os modos que usam
     um Qwen local (GPU_LOCAL, CPU_LOCAL), o model/tokenizer carregados no
@@ -52,8 +52,25 @@ def inicializar_modelo(model, tokenizer, modo: ModoExecucao = ModoExecucao.GPU_L
     No modo OPENAI não existe Qwen local — a geração de texto vai inteira
     para a API (gpt-4o-mini). Nesse caso, chame
     inicializar_modelo(None, None, ModoExecucao.OPENAI).
+
+    `modo` NÃO tem valor default de propósito (achado ao vivo, 30/08, Bloco
+    15): antes tinha `= ModoExecucao.GPU_LOCAL`, o que significa que uma
+    chamada na Célula 3 que por qualquer motivo deixasse de passar o 3º
+    argumento (célula desatualizada, erro de cópia, cache do Colab) cairia
+    SILENCIOSAMENTE em GPU_LOCAL — exatamente o tipo de fallback silencioso
+    que este projeto proíbe explicitamente desde o Ato 1, e o oposto do que
+    esta própria docstring promete ("nunca alterado silenciosamente"). Sem
+    default, uma chamada que esqueça `modo` agora estoura um TypeError alto
+    e claro na hora, em vez de rodar quieta no modo errado.
     """
     global _model, _tokenizer, _modo_execucao_ativo
+
+    if not isinstance(modo, ModoExecucao):
+        raise TypeError(
+            f"inicializar_modelo() exige um ModoExecucao explícito em `modo` — "
+            f"recebeu {modo!r}. Confirme que a Célula 3 passa "
+            f"ModoExecucao(MODO_EXECUCAO) como terceiro argumento."
+        )
 
     if modo != ModoExecucao.OPENAI and (model is None or tokenizer is None):
         raise RuntimeError(
