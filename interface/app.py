@@ -14,7 +14,7 @@ from schemas.models import (
 )
 from graph.agent import (
     processar_turno, processar_selecao_checkbox,
-    processar_confirmacao_pergunta_negocio,
+    processar_confirmacao_pergunta_negocio, obter_modo_ativo,
 )
 from audio.transcricao import transcrever_audio
 from audio.sintese import sintetizar_texto
@@ -40,7 +40,11 @@ OPCOES_RESULTADO = [
 # ────────────────────────────────────────────────────────────
 
 def nova_sessao() -> SessionState:
-    sessao = SessionState(modo_execucao=ModoExecucao.GPU_LOCAL)
+    # O modo de execução vem do que foi realmente carregado na Célula 2
+    # (obter_modo_ativo() lê o registro feito por inicializar_modelo()) —
+    # nunca um valor fixo aqui, pra sessao.modo_execucao nunca divergir do
+    # modelo que está de fato respondendo.
+    sessao = SessionState(modo_execucao=obter_modo_ativo())
     sessao.adicionar_demanda(DemandState())
     return sessao
 
@@ -210,7 +214,7 @@ def adicionar_mensagem_usuario(mensagem, historico):
     return historico, ""
 
 
-def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT", nome_arquivo="", mensagem_override=""):
+def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arquivo="", mensagem_override=""):
     # Passo 2: processa e adiciona a resposta do agente
     # origem_mensagem: "TEXT" (digitado), "AUDIO" (transcrição confirmada) ou
     # "FILE" (texto de anexo confirmado) — define o TipoInput do turno,
@@ -243,12 +247,10 @@ def processar_resposta(historico, sessao_state, modo_str, origem_mensagem="TEXT"
         return _vazio
 
     sessao = SessionState.model_validate(sessao_state) if sessao_state else nova_sessao()
-    modo_map = {
-        "GPU Local (Qwen3-4B)":   ModoExecucao.GPU_LOCAL,
-        "CPU Local (Qwen3-1.7B)": ModoExecucao.CPU_LOCAL,
-        "OpenAI (gpt-4o-mini)":   ModoExecucao.OPENAI,
-    }
-    sessao.modo_execucao = modo_map.get(modo_str, ModoExecucao.GPU_LOCAL)
+    # sessao.modo_execucao NÃO é mais reatribuído aqui a partir de um dropdown
+    # — o modo é fixado uma vez em nova_sessao() (a partir do que a Célula 2
+    # realmente carregou) e nunca muda no meio da sessão. Ver nota em
+    # graph/agent.py (_modo_execucao_ativo) para o porquê.
 
     MAPA_TIPO_TURNO = {"AUDIO": TipoInput.AUDIO, "FILE": TipoInput.FILE}
     tipo_turno = MAPA_TIPO_TURNO.get(origem_mensagem, TipoInput.TEXT)
@@ -569,11 +571,19 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             with gr.Column(scale=3):
                 gr.Markdown("## DataBrief AI\n*Agente para refinamento de demandas de dados*")
             with gr.Column(scale=1, min_width=200):
-                modo_selector = gr.Dropdown(
-                    choices=["GPU Local (Qwen3-4B)", "CPU Local (Qwen3-1.7B)", "OpenAI (gpt-4o-mini)"],
-                    value="GPU Local (Qwen3-4B)",
-                    label="Modo",
-                )
+                # Só exibe o modo — não deixa mais escolher/trocar no meio da
+                # sessão. O modo real é decidido na Célula 1/2 do notebook
+                # (variável MODO_EXECUCAO) e nunca muda depois que o Qwen (ou
+                # a ausência dele, no modo OPENAI) já está carregado. Um
+                # dropdown editável aqui só mudava um metadado, nunca o
+                # modelo de verdade — exatamente o tipo de "fallback
+                # silencioso" que o projeto proíbe.
+                _ROTULOS_MODO_UI = {
+                    ModoExecucao.GPU_LOCAL: "GPU Local (Qwen3-4B)",
+                    ModoExecucao.CPU_LOCAL: "CPU Local (Qwen3-1.7B)",
+                    ModoExecucao.OPENAI:    "OpenAI (gpt-4o-mini)",
+                }
+                gr.Markdown(f"**Modo ativo:** {_ROTULOS_MODO_UI[obter_modo_ativo()]}")
 
         gr.HTML("<hr style='margin:4px 0 0 0;border:none;border-top:1px solid #e5e7eb;'>")
 
@@ -714,7 +724,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[origem_mensagem_state],
         ).then(
             fn=processar_resposta,
-            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state],
+            inputs=[chatbot, sessao_state, origem_mensagem_state],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
@@ -742,7 +752,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[origem_mensagem_state],
         ).then(
             fn=processar_resposta,
-            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state],
+            inputs=[chatbot, sessao_state, origem_mensagem_state],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
@@ -775,7 +785,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             outputs=[origem_mensagem_state],
         ).then(
             fn=processar_resposta,
-            inputs=[chatbot, sessao_state, modo_selector, origem_mensagem_state, nome_arquivo_state, texto_anexo_pendente_state],
+            inputs=[chatbot, sessao_state, origem_mensagem_state, nome_arquivo_state, texto_anexo_pendente_state],
             outputs=[
                 chatbot, sessao_state, barra_progresso, briefing_html,
                 secao_briefing, btn_aprovar, arquivo_download,
