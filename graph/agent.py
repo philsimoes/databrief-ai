@@ -9,7 +9,7 @@ import langchain
 if not hasattr(langchain, 'debug'):
     langchain.debug = False
 
-import json, re, time
+import json, os, re, time
 from typing import TypedDict, Optional, List
 from langgraph.graph import StateGraph, END
 from schemas.models import (
@@ -20,24 +20,67 @@ from schemas.models import (
 )
 
 # ────────────────────────────────────────────────────────────
-# REFERÊNCIAS GLOBAIS AO MODELO
-# Preenchidas por inicializar_modelo() antes de usar o grafo
+# REFERÊNCIAS GLOBAIS AO MODELO E AO MODO DE EXECUÇÃO ATIVO
+# Preenchidas por inicializar_modelo() antes de usar o grafo.
+#
+# _modo_execucao_ativo é a fonte única de verdade sobre qual modo está
+# REALMENTE carregado nesta sessão do Colab (decidido pela variável
+# MODO_EXECUCAO na Célula 1/2). A interface Gradio só exibe esse valor —
+# não deixa mais escolher/trocar o modo por um dropdown editável, porque
+# isso nunca trocava o modelo de verdade (só um metadado solto), o que é
+# exatamente o tipo de "fallback silencioso" que o projeto proíbe.
 # ────────────────────────────────────────────────────────────
 
 _model = None
 _tokenizer = None
+_modo_execucao_ativo: Optional[ModoExecucao] = None
+
+_ROTULOS_MODO = {
+    ModoExecucao.GPU_LOCAL: "GPU Local (Qwen3-4B)",
+    ModoExecucao.CPU_LOCAL: "CPU Local (Qwen3-1.7B)",
+    ModoExecucao.OPENAI:    "OpenAI (gpt-4o-mini)",
+}
 
 
-def inicializar_modelo(model, tokenizer):
+def inicializar_modelo(model, tokenizer, modo: ModoExecucao = ModoExecucao.GPU_LOCAL):
     """
-    Recebe o model e tokenizer carregados no notebook e os
-    armazena para uso nos nós do grafo.
-    Chamar uma vez após carregar o Qwen na Célula 2.
+    Registra o modo de execução ativo desta sessão e, para os modos que usam
+    um Qwen local (GPU_LOCAL, CPU_LOCAL), o model/tokenizer carregados no
+    notebook. Chamar uma vez na Célula 2, depois de carregar o que for
+    preciso para o modo escolhido em MODO_EXECUCAO.
+
+    No modo OPENAI não existe Qwen local — a geração de texto vai inteira
+    para a API (gpt-4o-mini). Nesse caso, chame
+    inicializar_modelo(None, None, ModoExecucao.OPENAI).
     """
-    global _model, _tokenizer
+    global _model, _tokenizer, _modo_execucao_ativo
+
+    if modo != ModoExecucao.OPENAI and (model is None or tokenizer is None):
+        raise RuntimeError(
+            f"Modo {modo.value} exige model e tokenizer carregados na Célula 2 "
+            "— receberam None. Verifique se o carregamento do Qwen rodou antes "
+            "desta chamada."
+        )
+
     _model = model
     _tokenizer = tokenizer
-    print("✅ Modelo registrado no grafo")
+    _modo_execucao_ativo = modo
+    print(f"✅ Modo ativo registrado: {_ROTULOS_MODO[modo]}")
+
+
+def obter_modo_ativo() -> ModoExecucao:
+    """
+    Devolve o modo de execução realmente ativo nesta sessão (definido por
+    inicializar_modelo() na Célula 2). Usado pela interface para exibir o
+    modo ao usuário e por audio/transcricao.py para escolher o tamanho do
+    Whisper — nunca inferido/adivinhado, sempre a mesma fonte única.
+    """
+    if _modo_execucao_ativo is None:
+        raise RuntimeError(
+            "Modo de execução não inicializado. Chame inicializar_modelo(model, "
+            "tokenizer, modo) na Célula 2 antes de usar o grafo ou a interface."
+        )
+    return _modo_execucao_ativo
 
 
 # ────────────────────────────────────────────────────────────
@@ -45,12 +88,18 @@ def inicializar_modelo(model, tokenizer):
 # ────────────────────────────────────────────────────────────
 
 def chamar_qwen(prompt: str, max_tokens: int = 512) -> tuple:
-    """Chama o Qwen com um prompt e retorna (resposta, latência)."""
+    """Chama o Qwen local (GPU_LOCAL ou CPU_LOCAL) com um prompt e retorna
+    (resposta, latência). Funciona igual nos dois modos — a diferença entre
+    eles (tamanho do modelo, quantização 4-bit vs fp16/bf16 puro, cuda vs
+    cpu) é decidida inteiramente na Célula 2, ao carregar model/tokenizer;
+    aqui só se usa o que foi registrado, seja lá o que for."""
     import torch
 
     if _model is None or _tokenizer is None:
         raise RuntimeError(
-            "Modelo não inicializado. Chame inicializar_modelo(model, tokenizer) primeiro."
+            "Modelo local não inicializado. Chame inicializar_modelo(model, "
+            "tokenizer, modo) primeiro — ou, se o modo ativo é OPENAI, use "
+            "chamar_llm() em vez de chamar_qwen() diretamente."
         )
 
     mensagens = [{"role": "user", "content": prompt}]
@@ -78,6 +127,53 @@ def chamar_qwen(prompt: str, max_tokens: int = 512) -> tuple:
         skip_special_tokens=True
     )
     return resposta.strip(), latencia
+
+
+def chamar_openai(prompt: str, max_tokens: int = 512) -> tuple:
+    """Chama gpt-4o-mini via API da OpenAI e retorna (resposta, latência).
+
+    Nunca cai silenciosamente para o Qwen se a chave não estiver configurada
+    — levanta erro claro para o usuário corrigir a configuração, em vez de
+    trocar de modelo por trás sem avisar (requisito do projeto: "nunca
+    fallback silencioso")."""
+    chave = os.environ.get("OPENAI_API_KEY")
+    if not chave:
+        raise RuntimeError(
+            "Modo OPENAI está ativo, mas a variável de ambiente OPENAI_API_KEY "
+            "não está configurada nesta sessão do Colab. Defina a chave (ex.: "
+            "via Colab Secrets, ou os.environ['OPENAI_API_KEY'] = '...' na "
+            "Célula 1) antes de carregar este modo — o sistema não usa o Qwen "
+            "nem nenhum outro modelo no lugar sem avisar."
+        )
+
+    from openai import OpenAI
+    cliente = OpenAI(api_key=chave)
+
+    t0 = time.time()
+    resposta = cliente.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=0.1,
+    )
+    latencia = time.time() - t0
+
+    texto = (resposta.choices[0].message.content or "").strip()
+    return texto, latencia
+
+
+def chamar_llm(prompt: str, max_tokens: int = 512) -> tuple:
+    """Ponto único de chamada ao modelo de linguagem usado por todos os nós
+    do grafo. Despacha para o Qwen local (GPU_LOCAL/CPU_LOCAL) ou para a API
+    da OpenAI (OPENAI) conforme o modo registrado em inicializar_modelo() —
+    nunca por um valor solto vindo da interface. Se o modo ativo não tiver o
+    que precisa (modelo local não carregado, chave da OpenAI ausente), a
+    função chamada internamente levanta um erro claro em vez de usar outro
+    modelo no lugar."""
+    modo = obter_modo_ativo()
+    if modo == ModoExecucao.OPENAI:
+        return chamar_openai(prompt, max_tokens=max_tokens)
+    return chamar_qwen(prompt, max_tokens=max_tokens)
 
 
 # ────────────────────────────────────────────────────────────
@@ -465,7 +561,7 @@ def no_extrair_campos(state: GraphState) -> GraphState:
     )
 
     t0 = time.time()
-    resposta_raw, _ = chamar_qwen(prompt, max_tokens=300)
+    resposta_raw, _ = chamar_llm(prompt, max_tokens=300)
     latencia = time.time() - t0
 
     dados = extrair_json(resposta_raw)
@@ -548,7 +644,7 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
             contexto=contexto,
         )
         t0 = time.time()
-        sugestao_raw, _ = chamar_qwen(prompt_sugestao, max_tokens=200)
+        sugestao_raw, _ = chamar_llm(prompt_sugestao, max_tokens=200)
         latencia = time.time() - t0
 
         # Duas defesas contra o Qwen3-4B não seguir bem a instrução do prompt
@@ -604,7 +700,7 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         latencia = 0.0
     else:
         t0 = time.time()
-        pergunta, _ = chamar_qwen(prompt, max_tokens=150)
+        pergunta, _ = chamar_llm(prompt, max_tokens=150)
         latencia = time.time() - t0
 
     demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
@@ -642,7 +738,7 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     prompt = PROMPT_BRIEFING.format(estado=contexto)
 
     t0 = time.time()
-    resumo, _ = chamar_qwen(prompt, max_tokens=400)
+    resumo, _ = chamar_llm(prompt, max_tokens=400)
     latencia = time.time() - t0
 
     demanda.log_latencias[f"briefing_turno_{demanda.turno_atual}"] = latencia
