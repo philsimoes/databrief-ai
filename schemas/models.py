@@ -71,7 +71,12 @@ class ReadinessStatus(str, Enum):
     PRONTA        = "pronta"        # todos os campos obrigatórios preenchidos
     ESCLARECIMENTO = "esclarecimento" # campos preenchidos mas precisam confirmação
     DISCOVERY     = "discovery"     # campos obrigatórios ainda em aberto
-    BLOQUEADA     = "bloqueada"     # dependência externa impede avanço
+    BLOQUEADA     = "bloqueada"     # dependência externa impede avanço, OU
+                                     # (Bloco 20) todos os campos obrigatórios
+                                     # ainda vazios já estão em
+                                     # campos_desistidos — o agente parou de
+                                     # perguntar ativamente, precisa que o
+                                     # usuário traga a informação sozinho
 
 
 class ModoExecucao(str, Enum):
@@ -265,6 +270,25 @@ class DemandState(BaseModel):
     pendencias:     List[str]       = Field(default_factory=list)
     turno_atual:    int             = 0
     historico_turnos: List[TurnInput] = Field(default_factory=list)
+
+    # Quantas vezes cada campo já foi perguntado sem ainda ter sido resolvido —
+    # campo -> contagem. Usado só pra variar o texto quando a MESMA pergunta
+    # está sendo repetida (ver _texto_retentativa em graph/agent.py), pra não
+    # parecer que o agente travou repetindo a frase idêntica.
+    tentativas_pergunta: Dict[str, int] = Field(default_factory=dict)
+
+    # Campos que o agente desistiu de perguntar ativamente, depois de 3
+    # tentativas seguidas sem conseguir extrair um valor (ver
+    # no_avaliar_completude/no_formular_pergunta em graph/agent.py, Bloco 20).
+    # Continuam contando como pendência de verdade (nunca somem de
+    # campos_vazios()/pendencias, nunca deixam a demanda chegar em PRONTA
+    # sozinhos) — só param de ser escolhidos como campo_prioritario_atual,
+    # pra não repetir a mesma pergunta pra sempre. Se o usuário mencionar o
+    # valor espontaneamente em qualquer turno futuro (sem ter sido
+    # perguntado), a extração normal continua funcionando igual — "desistir"
+    # é só sobre parar de insistir com a pergunta, não sobre esquecer o
+    # campo.
+    campos_desistidos: List[str] = Field(default_factory=list)
 
     # Demandas derivadas detectadas nesta sessão
     # Ex: Gold necessária antes de um Produto de Dados
