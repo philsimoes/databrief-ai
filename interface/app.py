@@ -14,7 +14,8 @@ from schemas.models import (
 )
 from graph.agent import (
     processar_turno, processar_selecao_checkbox,
-    processar_confirmacao_pergunta_negocio, obter_modo_ativo,
+    processar_confirmacao_pergunta_negocio, processar_confirmacao_valor_negocio,
+    obter_modo_ativo,
 )
 from audio.transcricao import transcrever_audio
 from audio.sintese import sintetizar_texto
@@ -45,6 +46,22 @@ OPCOES_TIPO_DEMANDA = [
     "Produto de Dados",
     "Estruturante",
     "Alarmística",
+]
+
+# valor_negocio ganhou Radio nesta sessão (fechamento Ato 2/3) pelo mesmo
+# motivo de tipo_demanda: campo de classificação fixa (3 opções). Diferente
+# de tipo_demanda, aqui NÃO existe mais nenhum caminho de auto-preenchimento
+# por texto livre — o próprio PROMPT_EXTRAIR nunca deu ao Qwen uma palavra-
+# chave confiável pra esse campo (só "infira pelo contexto"), e o resultado
+# foi errar 3 de 3 vezes em teste real, nos dois tamanhos de modelo (Qwen3-
+# 1.7B e Qwen3-4B), sempre confundindo "Tático" com "Operacional" (ver
+# claude/ato3_kickoff.md, achado de valor_negocio, caso C004). Valores
+# idênticos ao enum ValorNegocio — ValorNegocio(selecao) precisa bater
+# exatamente.
+OPCOES_VALOR_NEGOCIO = [
+    "Operacional",
+    "Tático",
+    "Estratégico",
 ]
 
 # ────────────────────────────────────────────────────────────
@@ -236,11 +253,19 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
     # no chat — necessário para o anexo, onde o chat mostra só um rótulo
     # compacto (ex: "📎 arquivo.docx") mas o texto completo extraído precisa
     # ir inteiro pro pipeline de extração de campos.
+    # Nota (fechamento Ato 2/3): esta tupla estava desalinhada com a lista
+    # `outputs=` real (13 valores contra os 15 esperados antes da adição de
+    # valor_negocio) — bug pré-existente, nunca reproduzido porque este
+    # ramo só dispara com `historico` vazio, caminho raro na UI real.
+    # Corrigido junto com a adição de secao_radio_valor/radio_valor_negocio.
     _vazio = (historico, sessao_state,
               _barra_html(0, "Aguardando demanda"), "",
               gr.update(visible=False), gr.update(visible=False),
-              gr.update(visible=False), gr.update(visible=False),
-              gr.update(value=[]), gr.update(visible=False), gr.update(value=None),
+              gr.update(visible=False),
+              gr.update(visible=False), gr.update(value=None),
+              gr.update(visible=False), gr.update(value=[]),
+              gr.update(visible=False), gr.update(value=None),
+              gr.update(visible=False), gr.update(value=None),
               gr.update(visible=False), gr.update(value=""))
     if not historico:
         return _vazio
@@ -277,6 +302,7 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
     pede_tipo           = campo_atual == "tipo_demanda"
     pede_classificacao  = campo_atual == "classificacao_estrategica"
     pede_resultado      = campo_atual == "resultado_esperado"
+    pede_valor          = campo_atual == "valor_negocio"
     pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
@@ -292,6 +318,8 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
         gr.update(visible=pede_classificacao),
         gr.update(value=[]),
         gr.update(visible=pede_resultado),
+        gr.update(value=None),
+        gr.update(visible=pede_valor),
         gr.update(value=None),
         gr.update(visible=pede_pergunta_negocio),
         gr.update(value=sugestao_pergunta or ""),
@@ -313,6 +341,7 @@ def confirmar_tipo_demanda(selecao, sessao_state, historico):
                 gr.update(visible=False), gr.update(visible=False),
                 _barra_html(0, "Aguardando demanda"),
                 gr.update(visible=False), gr.update(value=[]),
+                gr.update(visible=False), gr.update(value=None),
                 gr.update(visible=False), gr.update(value=None),
                 gr.update(visible=False), gr.update(value=""))
 
@@ -336,6 +365,7 @@ def confirmar_tipo_demanda(selecao, sessao_state, historico):
     # pode ser qualquer um dos três com widget dedicado, não só um.
     pede_classificacao = campo_atual == "classificacao_estrategica"
     pede_resultado = campo_atual == "resultado_esperado"
+    pede_valor = campo_atual == "valor_negocio"
     pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
@@ -349,6 +379,8 @@ def confirmar_tipo_demanda(selecao, sessao_state, historico):
         gr.update(visible=pede_classificacao),
         gr.update(value=[]),
         gr.update(visible=pede_resultado),
+        gr.update(value=None),
+        gr.update(visible=pede_valor),
         gr.update(value=None),
         gr.update(visible=pede_pergunta_negocio),
         gr.update(value=sugestao_pergunta or ""),
@@ -413,6 +445,8 @@ def confirmar_resultado(selecao, sessao_state, historico):
         return (historico, sessao_state, gr.update(visible=False), "",
                 gr.update(visible=False), gr.update(visible=False),
                 _barra_html(0, "Aguardando demanda"),
+                gr.update(visible=False), gr.update(value=None),
+                gr.update(visible=False), gr.update(value=[]),
                 gr.update(visible=False), gr.update(value=""))
 
     from schemas.models import FieldProvenance, OrigemCampo
@@ -434,8 +468,14 @@ def confirmar_resultado(selecao, sessao_state, historico):
 
     pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
     briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
-    # resultado_esperado costuma ser seguido por classificacao_estrategica, mas
-    # em alguns fluxos (ex.: campo inferido) pode cair direto em perguntas_de_negocio
+    # resultado_esperado pode ser seguido por valor_negocio (Radio, novo
+    # nesta sessão — fechamento Ato 2/3) ou por classificacao_estrategica.
+    # CORRIGIDO DE BRINDE: esse "próximo campo" nunca era coberto aqui antes
+    # — se classificacao_estrategica viesse logo em seguida, o CheckboxGroup
+    # simplesmente não aparecia (secao_checkbox não estava nos outputs desta
+    # função). Achado ao revisar este fluxo pra adicionar valor_negocio.
+    pede_valor = campo_atual == "valor_negocio"
+    pede_classificacao = campo_atual == "classificacao_estrategica"
     pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
 
     return (
@@ -446,6 +486,61 @@ def confirmar_resultado(selecao, sessao_state, historico):
         gr.update(visible=pronto),
         gr.update(visible=pronto),
         renderizar_barra_progresso(sessao),
+        gr.update(visible=pede_valor),
+        gr.update(value=None),
+        gr.update(visible=pede_classificacao),
+        gr.update(value=[]),
+        gr.update(visible=pede_pergunta_negocio),
+        gr.update(value=sugestao_pergunta or ""),
+    )
+
+
+def confirmar_valor_negocio(selecao, sessao_state, historico):
+    """Chamada quando o usuário confirma o Radio de valor_negocio (novo
+    nesta sessão — fechamento Ato 2/3). Aplica o valor direto ao estado e
+    avança o grafo — mesmo padrão de confirmar_tipo_demanda/confirmar_resultado.
+
+    valor_negocio deixou de ser extraído em texto livre (ver aplicar_extracao
+    em graph/agent.py) depois de errar 3 de 3 vezes em teste real, nos dois
+    tamanhos de modelo — a aplicação em si mora em
+    processar_confirmacao_valor_negocio (graph/agent.py), reaproveitada
+    também pelo runner de testes (scripts/rodar_casos.py), que não passa
+    pela UI Gradio.
+    """
+    if not selecao or not sessao_state:
+        return (historico, sessao_state, gr.update(visible=False), "",
+                gr.update(visible=False), gr.update(visible=False),
+                _barra_html(0, "Aguardando demanda"),
+                gr.update(visible=False), gr.update(value=[]),
+                gr.update(visible=False), gr.update(value=""))
+
+    sessao = SessionState.model_validate(sessao_state)
+    sessao = processar_confirmacao_valor_negocio(sessao, selecao)
+
+    historico = historico or []
+    historico.append({"role": "user", "content": f"Valor de negócio: {selecao}"})
+
+    sessao, resposta, briefing, campo_atual, sugestao_pergunta = processar_turno(agente, sessao, "__radio__")
+    historico.append({"role": "assistant", "content": resposta})
+
+    pronto = sessao.demanda_ativa and sessao.demanda_ativa.readiness == ReadinessStatus.PRONTA
+    briefing_html_val = renderizar_briefing_final(sessao) if pronto else ""
+    # valor_negocio costuma ser seguido por classificacao_estrategica na
+    # ordem de campos_vazios, mas pode cair direto em perguntas_de_negocio
+    # se classificacao já tiver sido extraída no mesmo turno.
+    pede_classificacao = campo_atual == "classificacao_estrategica"
+    pede_pergunta_negocio = campo_atual == "perguntas_de_negocio"
+
+    return (
+        historico,
+        sessao.model_dump(mode="json"),
+        gr.update(visible=False),
+        briefing_html_val,
+        gr.update(visible=pronto),
+        gr.update(visible=pronto),
+        renderizar_barra_progresso(sessao),
+        gr.update(visible=pede_classificacao),
+        gr.update(value=[]),
         gr.update(visible=pede_pergunta_negocio),
         gr.update(value=sugestao_pergunta or ""),
     )
@@ -723,6 +818,25 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                     "Confirmar", variant="primary", size="sm"
                 )
 
+            # ── Radio — valor_negocio (fechamento Ato 2/3) ────
+            # Campo errou 3/3 vezes em teste real (nos dois tamanhos de
+            # modelo) quando extraído em texto livre — sem palavra-chave
+            # confiável pra proteger com uma checagem, ganhou Radio dedicado
+            # em vez disso (ver OPCOES_VALOR_NEGOCIO acima).
+            with gr.Column(visible=False) as secao_radio_valor:
+                gr.Markdown(
+                    "**Essa demanda apoia decisões do dia a dia, de médio prazo "
+                    "ou o direcionamento estratégico do negócio?**"
+                )
+                radio_valor_negocio = gr.Radio(
+                    choices=OPCOES_VALOR_NEGOCIO,
+                    label="",
+                    show_label=False,
+                )
+                btn_confirmar_valor = gr.Button(
+                    "Confirmar", variant="primary", size="sm"
+                )
+
             # ── Sugestão de pergunta de negócio ───────────────
             # perguntas_de_negocio não é mais perguntado em aberto: o agente
             # sempre sugere uma pergunta candidata (gerada a partir do
@@ -819,6 +933,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_radio_valor, radio_valor_negocio,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
@@ -848,6 +963,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_radio_valor, radio_valor_negocio,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
@@ -882,6 +998,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_radio_tipo, radio_tipo,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_radio_valor, radio_valor_negocio,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
@@ -902,6 +1019,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 barra_progresso,
                 secao_checkbox, checkbox_classificacao,
                 secao_radio_resultado, radio_resultado,
+                secao_radio_valor, radio_valor_negocio,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
@@ -928,6 +1046,22 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 briefing_html,
                 secao_briefing, btn_aprovar,
                 barra_progresso,
+                secao_radio_valor, radio_valor_negocio,
+                secao_checkbox, checkbox_classificacao,
+                secao_sugestao_pergunta, editor_pergunta_negocio,
+            ],
+        )
+
+        btn_confirmar_valor.click(
+            fn=confirmar_valor_negocio,
+            inputs=[radio_valor_negocio, sessao_state, chatbot],
+            outputs=[
+                chatbot, sessao_state,
+                secao_radio_valor,
+                briefing_html,
+                secao_briefing, btn_aprovar,
+                barra_progresso,
+                secao_checkbox, checkbox_classificacao,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
             ],
         )
