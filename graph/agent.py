@@ -410,6 +410,93 @@ _PADROES_SEM_RESPOSTA = (
 )
 
 
+# ────────────────────────────────────────────────────────────
+# Bloco 18 — guardas de "incerteza" para tipo_demanda e objetivo
+#
+# Princípio comum aos dois: o agente é conversacional — o objetivo é
+# chegar no MELHOR briefing, não economizar uma pergunta a qualquer custo.
+# Quando a extração é incerta, o campo simplesmente continua vazio e a
+# conversa que já existe (Radio de tipo_demanda, ou o agente perguntando
+# de novo sobre objetivo) resolve — nenhuma tela nova, nenhum widget de
+# "confirme esse candidato". As duas guardas só disparam em situações
+# raras e concretas (não em qualquer campo incerto de forma vaga), pra não
+# criar pergunta desnecessária nos casos que já funcionam.
+# ────────────────────────────────────────────────────────────
+
+# tipo_demanda: mesmas categorias/palavras-chave documentadas em
+# PROMPT_EXTRAIR acima — mantido como dict separado (mesmo padrão já usado
+# em PALAVRAS_FORMATO_EXPLICITO pra resultado_esperado) porque aqui o uso é
+# programático (contar categorias no texto), não texto de prompt.
+_PALAVRAS_TIPO_DEMANDA = {
+    "Produto de Dados": (
+        "dashboard", "painel", "relatório automatizado", "relatorio automatizado", "agente",
+    ),
+    "Análise": (
+        "análise pontual", "analise pontual", "investigação", "investigacao", "entender algo",
+    ),
+    "Estruturante": (
+        "pipeline", "tabela gold", "engenharia de dados",
+    ),
+    "Alarmística": (
+        "alerta", "monitoramento", "sempre que", "receber notificação", "receber notificacao",
+        "receber e-mail", "receber email", "receber mensagem", "aviso automático",
+        "aviso automatico", "disparar alerta",
+    ),
+}
+
+
+def _categorias_tipo_demanda_no_texto(texto: str) -> set:
+    """Conta em quantas categorias DIFERENTES de tipo_demanda o texto real
+    do turno (não a extração do Qwen) bate alguma palavra-chave. Usado só
+    pra detectar ambiguidade — ver nota em aplicar_extracao().
+    """
+    t = str(texto or "").lower()
+    categorias = set()
+    for categoria, palavras in _PALAVRAS_TIPO_DEMANDA.items():
+        if any(p in t for p in palavras):
+            categorias.add(categoria)
+    return categorias
+
+
+# objetivo: turno que é essencialmente uma frase de entrega/transmissão de
+# arquivo, não uma descrição de objetivo real. Duas condições, as DUAS
+# precisam ser verdade — nenhuma sozinha é suficiente (ver observação no
+# risco de falso positivo discutida antes de implementar): usar só palavras
+# soltas pegaria frases substantivas de verdade que citam essas palavras de
+# passagem (ex.: "Preciso entender por que os alunos não estão recebendo o
+# boleto de matrícula a tempo." não deveria disparar, e não dispara, porque
+# nenhum dos padrões abaixo aparece nela).
+_PADROES_TRANSMISSAO_OBJETIVO = (
+    "segue o anexo", "segue anexo", "segue o arquivo", "segue arquivo",
+    "segue o documento", "segue documento", "segue o briefing", "segue briefing",
+    "segue a planilha", "segue planilha", "segue o material", "segue material",
+    "em anexo", "anexei",
+    "aqui está o arquivo", "aqui esta o arquivo",
+    "aqui está o documento", "aqui esta o documento",
+    "conforme combinado", "conforme conversamos", "conforme alinhado",
+)
+
+
+def _parece_apenas_transmissao(texto: str) -> bool:
+    """Heurística de baixa confiança pra objetivo — verdadeira só quando o
+    turno é essencialmente uma frase de entrega ("segue o anexo", "em
+    anexo", ...) e não uma frase mais longa que menciona isso de passagem.
+    As DUAS condições precisam ser verdade:
+    1) bate um dos padrões de transmissão explícitos acima;
+    2) a mensagem inteira é curta (até 15 palavras) — o suficiente pra uma
+       frase de transmissão pura (caso real, C007: "Segue o briefing que
+       recebi do time comercial do Ibmec, anexei o documento." tem 13
+       palavras), mas não pra uma frase substantiva que também descreva um
+       objetivo de verdade.
+    """
+    t = str(texto or "").strip().lower()
+    if not t:
+        return False
+    if not any(p in t for p in _PADROES_TRANSMISSAO_OBJETIVO):
+        return False
+    return len(t.split()) <= 15
+
+
 def _normalizar_texto_campo(valor) -> str:
     """Bug real visto ao vivo (Ato 3, Bloco 12, Qwen3-1.7B/CPU_LOCAL): pra
     campos que deveriam ser um texto único (bloqueios, link_evidencia), o
@@ -479,7 +566,24 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         if any(p in ultima_pergunta.lower() for p in PALAVRAS_PERGUNTA_TITULO):
             demanda.titulo = fp(dados["titulo"])
     if dados.get("objetivo") and not demanda.objetivo:
-        demanda.objetivo = fp(dados["objetivo"])
+        # Guarda anti-alucinação nova (Bloco 18). Bug real (C007, GPU_LOCAL,
+        # 06/09): turno 1 ("Segue o briefing que recebi do time comercial do
+        # Ibmec, anexei o documento.") fez o Qwen extrair um objetivo fraco —
+        # paráfrase da AÇÃO de entregar o anexo, não o objetivo real, que só
+        # chegava no turno 2 (o próprio anexo). Como esse campo só aceita
+        # quando ainda vazio, esse valor fraco travava o campo pro resto da
+        # demanda, e o objetivo de verdade do anexo nunca tinha chance de
+        # entrar. Diferente de resultado_esperado/bloqueios/link_evidencia,
+        # aqui não tentamos julgar se o valor extraído é bom ou ruim — só
+        # detectamos quando o turno é essencialmente uma frase de
+        # transmissão (ver _parece_apenas_transmissao) e, nesse caso, não
+        # gravamos nada: o campo continua vazio e a conversa segue
+        # perguntando normalmente, como já faz pra qualquer campo vazio —
+        # o agente é conversacional, o objetivo é chegar no melhor
+        # briefing, não economizar uma pergunta a qualquer custo. Fora
+        # desse gatilho específico, comportamento inalterado.
+        if not _parece_apenas_transmissao(turno_conteudo):
+            demanda.objetivo = fp(dados["objetivo"])
     if dados.get("resultado_esperado") and not demanda.resultado_esperado:
         # Só aceita resultado_esperado se o texto ORIGINAL do usuário (não a
         # extração do Qwen) contiver uma palavra-chave de formato explícita.
@@ -527,10 +631,27 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
             demanda.link_evidencia = fp(link_txt)
 
     if dados.get("tipo_demanda") and not demanda.tipo_demanda:
-        try:
-            demanda.tipo_demanda = TipoDemanda(dados["tipo_demanda"])
-        except ValueError:
-            pass
+        # Guarda anti-ambiguidade nova (Bloco 18). Achado real (C008,
+        # GPU_LOCAL, ver ato3_kickoff.md): turno de áudio mencionava "painel
+        # de monitoramento", que colide sozinho contra as PRÓPRIAS
+        # palavras-chave do PROMPT_EXTRAIR acima ("painel" → Produto de
+        # Dados, "monitoramento" → Alarmística). O Qwen3-4B respondeu
+        # confiante e errado ("Alarmística" em vez de "Produto de Dados") —
+        # um heurístico de "confiança baixa" não pegaria isso, porque a
+        # confiança aparente era alta. Em vez disso, checamos ambiguidade de
+        # verdade: se o texto real do turno bate com palavras-chave de DUAS
+        # OU MAIS categorias ao mesmo tempo, não travamos nenhum valor — o
+        # campo continua vazio e o Radio que já existe (Bloco 08) resolve,
+        # exatamente como resolveria se nada tivesse sido extraído. Só
+        # dispara nessa colisão específica — não adiciona pergunta nenhuma
+        # nos casos que já funcionam (a esmagadora maioria, com só uma
+        # categoria de palavra-chave presente ou nenhuma).
+        categorias_no_texto = _categorias_tipo_demanda_no_texto(turno_conteudo)
+        if len(categorias_no_texto) < 2:
+            try:
+                demanda.tipo_demanda = TipoDemanda(dados["tipo_demanda"])
+            except ValueError:
+                pass
 
     # valor_negocio NÃO é mais preenchido aqui (fechamento Ato 2/3, achado
     # desta sessão). Bug real observado 3 de 3 vezes seguidas, nos dois
