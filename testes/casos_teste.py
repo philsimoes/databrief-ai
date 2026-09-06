@@ -320,12 +320,24 @@ CASOS = [
             },
         ],
         "campos_esperados_apos_turnos": {
-            "tipo_demanda": "Produto de Dados",
             "objetivo": "acompanhar em tempo real a fila da Central de Relacionamento do aluno",
         },
         "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
-        "observacoes": "no ambiente real este conteúdo viria de transcrever_audio(); aqui já entra como texto transcrito porque o script de avaliação não invoca o Whisper — o que se testa é o pipeline a partir da transcrição (origem=AUDIO, timestamp_audio setado).",
+        "observacoes": (
+            "no ambiente real este conteúdo viria de transcrever_audio(); aqui já entra como texto "
+            "transcrito porque o script de avaliação não invoca o Whisper — o que se testa é o "
+            "pipeline a partir da transcrição (origem=AUDIO, timestamp_audio setado). ATUALIZADO "
+            "(Bloco 18, fechamento Ato 2/3): tipo_demanda saiu de campos_esperados_apos_turnos de "
+            "propósito. Esse é justamente o caso que expôs o bug real — 'painel de monitoramento' "
+            "bate palavra-chave de Produto de Dados ('painel') E de Alarmística ('monitoramento') ao "
+            "mesmo tempo, e em teste real (GPU_LOCAL) o Qwen respondeu confiante e ERRADO "
+            "('Alarmística'). Agora, quando o texto bate com duas ou mais categorias ao mesmo tempo, "
+            "o campo fica None neste checkpoint por design (nenhuma categoria trava sozinha) e só é "
+            "resolvido depois, via Radio (Bloco 08) — mesmo princípio já aplicado a valor_negocio no "
+            "C004: o resultado esperado aqui mudou de 'o valor que o Qwen deveria ter extraído' para "
+            "'não preenchido ainda, aguardando confirmação ativa'."
+        ),
     },
 
     # ────────────────────────────────────────────────────────────
