@@ -232,7 +232,10 @@ Extraia apenas o que está explícito. Para cada campo, siga:
   Na dúvida: null
 - resultado_esperado: Formato técnico de entrega. Extraia APENAS se o usuário disse
   explicitamente "dashboard", "agente", "tabela", "pipeline". Não extraia se descreveu só o tema.
-- valor_negocio: "Operacional", "Tático" ou "Estratégico". Infira pelo contexto.
+- valor_negocio: NÃO extraia esse campo. Sempre confirmado via Radio dedicado na
+  interface (Operacional / Tático / Estratégico) — nunca a partir de texto livre.
+  Errou 3 de 3 vezes em teste real, nos dois tamanhos de modelo, sempre confundindo
+  "Tático" com "Operacional" (ver nota em aplicar_extracao).
 - titulo, bloqueios, link_evidencia: Só se mencionado explicitamente. Se não houver
   menção, NÃO inclua a chave no JSON — nunca escreva frases como "não há bloqueios
   mencionados" ou "não mencionado" como se fosse um valor.
@@ -245,7 +248,6 @@ Extraia apenas o que está explícito. Para cada campo, siga:
 
 Se a pergunta anterior era sobre um campo específico e a resposta é curta, associe ao campo:
   formato de entrega → resultado_esperado
-  impacto no negócio → valor_negocio
   título → titulo
 
 JSON:"""
@@ -530,11 +532,19 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         except ValueError:
             pass
 
-    if dados.get("valor_negocio") and not demanda.valor_negocio:
-        try:
-            demanda.valor_negocio = ValorNegocio(dados["valor_negocio"])
-        except ValueError:
-            pass
+    # valor_negocio NÃO é mais preenchido aqui (fechamento Ato 2/3, achado
+    # desta sessão). Bug real observado 3 de 3 vezes seguidas, nos dois
+    # tamanhos de modelo (Qwen3-1.7B e Qwen3-4B): o Qwen confundia "Tático"
+    # com "Operacional" sempre que o texto do usuário mencionava a palavra
+    # "operacional" em outro sentido (ex.: "eficiência operacional", que na
+    # verdade é uma classificacao_estrategica, não o valor_negocio — caso
+    # real: C004). Ao contrário de resultado_esperado, esse campo nunca
+    # teve palavra-chave confiável no PROMPT_EXTRAIR ("infira pelo
+    # contexto", sem nenhum gatilho literal) — não dá pra proteger com uma
+    # checagem de palavra-chave como fizemos lá. Único caminho agora: Radio
+    # dedicado na interface (ver confirmar_valor_negocio em interface/app.py
+    # e processar_confirmacao_valor_negocio abaixo), mesmo princípio já
+    # usado em perguntas_de_negocio.
 
     if dados.get("classificacao_estrategica") and not demanda.classificacao_estrategica:
         classificacoes = []
@@ -926,6 +936,32 @@ def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> Ses
         demanda.classificacao_estrategica = classificacoes
         sessao.demandas[sessao.indice_ativo] = demanda
 
+    return sessao
+
+
+def processar_confirmacao_valor_negocio(sessao: SessionState, valor_selecionado: str) -> SessionState:
+    """
+    Aplica valor_negocio confirmado via Radio direto ao estado — não passa
+    pelo Qwen (ver nota em aplicar_extracao sobre por que esse campo deixou
+    de ser extraído em texto livre: errou 3/3 vezes em teste real, nos dois
+    tamanhos de modelo). Centralizada aqui, e não só em interface/app.py,
+    para ser reaproveitada também pelo runner de testes
+    (scripts/rodar_casos.py), que roda os casos direto contra o grafo sem
+    passar pela UI Gradio.
+
+    valor_negocio é um enum "bare" em DemandState (mesmo padrão de
+    tipo_demanda) — não é wrapeado em FieldProvenance.
+    """
+    demanda = sessao.demanda_ativa
+    if not demanda or not valor_selecionado:
+        return sessao
+
+    try:
+        demanda.valor_negocio = ValorNegocio(valor_selecionado)
+    except ValueError:
+        return sessao
+
+    sessao.demandas[sessao.indice_ativo] = demanda
     return sessao
 
 
