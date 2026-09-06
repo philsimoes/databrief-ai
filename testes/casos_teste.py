@@ -171,7 +171,6 @@ CASOS = [
         ],
         "campos_esperados_apos_turnos": {
             "tipo_demanda": "Alarmística",
-            "valor_negocio": "Tático",
             "classificacao_estrategica": ["Eficiência Operacional"],
         },
         "readiness_esperado_apos_turnos": "discovery",
@@ -184,7 +183,16 @@ CASOS = [
             "teste ao vivo (30/08): a guarda anti-alucinação de titulo em aplicar_extracao() só "
             "aceita o valor depois que o agente já perguntou especificamente sobre título (ver "
             "nota no cabeçalho deste arquivo); titulo sempre vem None neste checkpoint, por "
-            "design, não por falha do Qwen."
+            "design, não por falha do Qwen. ATUALIZADO (fechamento Ato 2/3): valor_negocio "
+            "também saiu de campos_esperados_apos_turnos — era justamente este o caso que "
+            "expôs o bug real (Qwen extraía 'Operacional' em vez de 'Tático' aqui, 3/3 vezes "
+            "em teste real, nos dois tamanhos de modelo, confundindo com a palavra 'operacional' "
+            "dentro de 'eficiência operacional'). O campo deixou de ser extraído em texto livre "
+            "e agora só é preenchido via confirmação de Radio — neste checkpoint (antes de "
+            "qualquer Radio confirmado) ele sempre vem None, por design. Este caso continua "
+            "sendo o motivo documentado da mudança; só o resultado esperado aqui mudou de "
+            "'Tático' (o valor que deveria ter sido extraído) para 'não preenchido ainda' "
+            "(o comportamento correto agora, que exige confirmação ativa do usuário)."
         ),
     },
 
@@ -239,7 +247,11 @@ CASOS = [
             # principal, caiu mesmo na pergunta fixa. Resposta abaixo usa "agente automatizado",
             # que É um gatilho explícito dos dois lados (PROMPT_EXTRAIR e PALAVRAS_FORMATO_EXPLICITO).
             "resultado_esperado": "Um agente automatizado que envia o relatório mensalmente.",
-            "valor_negocio": "Tático.",
+            # ATUALIZADO (fechamento Ato 2/3): valor_negocio agora só é aplicado via confirmação
+            # de Radio (processar_confirmacao_valor_negocio), não mais por texto livre parseado
+            # pelo Qwen — o runner simula o clique do Radio, então o valor aqui precisa bater
+            # EXATAMENTE com um dos 3 valores do enum ValorNegocio (sem pontuação no final).
+            "valor_negocio": "Tático",
             "classificacao_estrategica": "Monitoramento.",
             "titulo": "Renovação de matrícula na pós-graduação do Ibmec",
         },
