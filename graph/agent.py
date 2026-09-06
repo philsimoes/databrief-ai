@@ -777,16 +777,76 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
     # )
 
     vazios = campos_vazios(demanda)
+
+    # Bloco 20 — desiste de campos que já bateram 3 tentativas seguidas sem
+    # resolver (ver _texto_retentativa/no_formular_pergunta abaixo). Feito
+    # AQUI, não em no_formular_pergunta, pra readiness já refletir a
+    # desistência no mesmo turno em que ela acontece, não um turno depois.
+    # "Desistir" só tira o campo da lista de perguntas ativas — ele continua
+    # em pendencias/vazios normalmente, nunca deixa a demanda chegar em
+    # PRONTA sozinho, e se o usuário mencionar o valor espontaneamente em
+    # qualquer turno futuro, a extração normal ainda funciona (esse laço só
+    # olha campos_desistidos, nunca campos_vazios).
+    for campo in vazios:
+        if campo not in demanda.campos_desistidos and demanda.tentativas_pergunta.get(campo, 0) >= 3:
+            demanda.campos_desistidos.append(campo)
+
     if not vazios:
         demanda.readiness = ReadinessStatus.PRONTA
         demanda.pendencias = []
     else:
-        demanda.readiness = ReadinessStatus.DISCOVERY
+        ainda_askaveis = [c for c in vazios if c not in demanda.campos_desistidos]
+        # BLOQUEADA: todo campo que falta já foi desistido — o agente parou
+        # de perguntar ativamente, precisa que o usuário traga a informação
+        # por conta própria (ver mensagem terminal em no_formular_pergunta).
+        demanda.readiness = (
+            ReadinessStatus.BLOQUEADA if not ainda_askaveis else ReadinessStatus.DISCOVERY
+        )
         demanda.pendencias = vazios
 
     sessao.demandas[sessao.indice_ativo] = demanda
     state["sessao"] = sessao
     return state
+
+
+# Bloco 20 — exemplo concreto mostrado na 3ª tentativa (ver _texto_retentativa
+# abaixo), um por campo que passa por essa função (os campos com Radio/
+# Checkbox resolvem na 1ª tentativa via clique, então na prática isso entra
+# em ação principalmente em titulo/objetivo — texto livre puro — mas fica
+# definido pra todos por uniformidade, caso alguém digite em vez de clicar).
+_EXEMPLOS_CAMPO = {
+    "titulo": "algo como 'Alerta de evasão no Digital' ou 'Dashboard de captação do Semipresencial'",
+    "objetivo": "algo como 'entender por que a taxa de renovação caiu no último trimestre'",
+    "resultado_esperado": "algo como 'um dashboard interativo' ou 'um agente automatizado'",
+    "tipo_demanda": "algo como 'uma análise pontual' ou 'um dashboard'",
+    "valor_negocio": "algo como 'apoia decisões do dia a dia' ou 'é estratégico pro negócio'",
+    "classificacao_estrategica": "algo como 'monitoramento' ou 'priorização'",
+}
+
+
+def _texto_retentativa(campo: str, tentativas: int, texto_base: str) -> str:
+    """Bloco 20 — monta o texto final da pergunta/sugestão pro campo,
+    variando conforme quantas vezes ELE especificamente já foi perguntado
+    sem resolver. Achado real (roteiro de teste, 06/09): PERGUNTAS_FIXAS
+    devolve sempre a frase idêntica, palavra por palavra — repetir a mesma
+    pergunta várias vezes seguidas parece o agente travado num loop, não
+    "ainda não entendi sua resposta".
+
+    tentativas == 1: pergunta normal, sem nada a mais (1ª vez perguntando).
+    tentativas == 2: pede desculpa e repete a pergunta, tom mais leve.
+    tentativas >= 3: além da desculpa, oferece um exemplo concreto (quando
+    existe um cadastrado em _EXEMPLOS_CAMPO). Depois desta tentativa, se
+    ainda não resolver, o campo é desistido (ver no_avaliar_completude) —
+    nunca chega numa tentativa == 4 pedindo a mesma coisa de novo.
+    """
+    if tentativas <= 1:
+        return texto_base
+    if tentativas == 2:
+        return f"Desculpe, não entendi — pode dizer com outras palavras? {texto_base}"
+    exemplo = _EXEMPLOS_CAMPO.get(campo)
+    if exemplo:
+        return f"Desculpe, ainda não consegui entender. Deixa eu te dar um exemplo: {exemplo}. {texto_base}"
+    return f"Desculpe, ainda não consegui entender — pode tentar explicar de um jeito diferente? {texto_base}"
 
 
 def no_formular_pergunta(state: GraphState) -> GraphState:
@@ -797,8 +857,45 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     # Recalcula campos_vazios diretamente — demanda.pendencias é zerado pelo LangGraph
     vazios = campos_vazios(demanda)
 
+    # Bloco 20 — campos_desistidos já foi atualizado em no_avaliar_completude
+    # (roda antes deste nó) — aqui só filtramos os campos que ainda vale a
+    # pena perguntar ativamente, pulando os que já foram desistidos.
+    askaveis = [c for c in vazios if c not in demanda.campos_desistidos]
+
+    if not askaveis:
+        # Todo campo que falta já foi desistido (3 tentativas cada, sem
+        # resolver) — não há mais nada pra perguntar ativamente. Não inventa
+        # uma pergunta nova nem repete uma antiga: explica o que falta e
+        # convida o usuário a trazer a informação quando quiser (a extração
+        # normal ainda funciona se ele mencionar espontaneamente — só o
+        # AGENTE parou de perguntar, ver nota em campos_desistidos no
+        # schema). readiness já está BLOQUEADA (no_avaliar_completude).
+        pendentes_txt = ", ".join(vazios)
+        sessao.demandas[sessao.indice_ativo] = demanda
+        state["sessao"] = sessao
+        state["ultima_resposta_agente"] = (
+            f"Não consegui fechar sozinho: {pendentes_txt}. Me conta quando "
+            "tiver essa informação, ou ajuste manualmente na revisão antes "
+            "de aprovar."
+        )
+        state["campo_prioritario_atual"] = ""
+        state["sugestao_pergunta_negocio"] = None
+        return state
+
     # Separa campo prioritário dos demais
-    campo_prioritario = vazios[0] if vazios else ""
+    campo_prioritario = askaveis[0]
+
+    # Bloco 19/20 — conta quantas vezes ESSE campo específico já foi
+    # perguntado sem ter sido resolvido ainda. Cada campo tem seu próprio
+    # contador (dict campo -> contagem) — não é afetado por outros campos
+    # pendentes. tentativas == 1 na primeira vez, sobe a cada rodada em que o
+    # campo continua vazio. Usado só pra variar o texto (_texto_retentativa)
+    # e, a partir de 3, pra desistir (no_avaliar_completude) — nunca pra
+    # decidir se um campo foi resolvido ou não.
+    demanda.tentativas_pergunta[campo_prioritario] = (
+        demanda.tentativas_pergunta.get(campo_prioritario, 0) + 1
+    )
+    tentativas = demanda.tentativas_pergunta[campo_prioritario]
 
     # perguntas_de_negocio não é mais perguntado em aberto no chat (ver nota em
     # PERGUNTAS_FIXAS acima). Em vez de perguntar, o agente sempre gera UMA
@@ -844,12 +941,15 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
         demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
         sessao.demandas[sessao.indice_ativo] = demanda
         state["sessao"] = sessao
-        state["ultima_resposta_agente"] = (
+        texto_base_sugestao = (
             "Com base no que você já me contou, sugiro essas perguntas de negócio "
             "para essa demanda — edite se quiser (uma por linha) e confirme abaixo:"
             if mais_de_uma else
             "Com base no que você já me contou, sugiro essa pergunta de negócio "
             "para essa demanda — edite se quiser e confirme abaixo:"
+        )
+        state["ultima_resposta_agente"] = _texto_retentativa(
+            campo_prioritario, tentativas, texto_base_sugestao
         )
         state["campo_prioritario_atual"] = campo_prioritario
         state["sugestao_pergunta_negocio"] = sugestao_texto
@@ -875,7 +975,7 @@ def no_formular_pergunta(state: GraphState) -> GraphState:
     demanda.log_latencias[f"pergunta_turno_{demanda.turno_atual}"] = latencia
     sessao.demandas[sessao.indice_ativo] = demanda
     state["sessao"] = sessao
-    state["ultima_resposta_agente"] = pergunta.strip()
+    state["ultima_resposta_agente"] = _texto_retentativa(campo_prioritario, tentativas, pergunta.strip())
     state["campo_prioritario_atual"] = campo_prioritario
     state["sugestao_pergunta_negocio"] = None
     return state
@@ -1025,7 +1125,13 @@ def processar_turno(agente, sessao: SessionState, texto_usuario: str, tipo: Tipo
     campo_prioritario = ""
     if demanda_resultado and demanda_resultado.readiness != ReadinessStatus.PRONTA:
         vazios_agora = campos_vazios(demanda_resultado)
-        campo_prioritario = vazios_agora[0] if vazios_agora else ""
+        # Bloco 20 — mesmo filtro de campos_desistidos usado em
+        # no_formular_pergunta(): sem isso, esse recálculo (que decide qual
+        # Radio/Checkbox a interface mostra) continuaria apontando pro campo
+        # que o agente já desistiu de perguntar, mesmo com o texto do chat
+        # já mostrando a mensagem de "não consegui fechar sozinho".
+        askaveis_agora = [c for c in vazios_agora if c not in demanda_resultado.campos_desistidos]
+        campo_prioritario = askaveis_agora[0] if askaveis_agora else ""
 
     return (
         sessao_resultado,
