@@ -562,8 +562,18 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         # demanda?"). Isso garante que o valor só entra quando o usuário
         # estava realmente respondendo sobre título, não quando o Qwen
         # inventou por conta própria em qualquer outro turno.
+        #
+        # Bloco 21 — fix: exigir também "?" na última pergunta, não só a
+        # palavra-chave. Bug real (06/09, GPU_LOCAL): a mensagem de
+        # desistência do Bloco 20 ("Não consegui fechar sozinho: titulo...")
+        # também contém a palavra "titulo", então sem essa checagem ela
+        # reabria esse guarda e qualquer texto do turno seguinte (até lixo
+        # tipo "blz") era aceito como título. Toda pergunta real sobre
+        # título (fixa ou as 3 variações de retentativa do Bloco 20) termina
+        # com "?"; a mensagem de desistência não tem "?" nenhum.
         PALAVRAS_PERGUNTA_TITULO = ("chamaria", "nome", "título", "titulo")
-        if any(p in ultima_pergunta.lower() for p in PALAVRAS_PERGUNTA_TITULO):
+        pergunta_lower = ultima_pergunta.lower()
+        if "?" in pergunta_lower and any(p in pergunta_lower for p in PALAVRAS_PERGUNTA_TITULO):
             demanda.titulo = fp(dados["titulo"])
     if dados.get("objetivo") and not demanda.objetivo:
         # Guarda anti-alucinação nova (Bloco 18). Bug real (C007, GPU_LOCAL,
@@ -614,7 +624,12 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
             "converse": "Agente automatizado",
             "relatório automatizado": "Agente automatizado",
             "e-mail": "Agente automatizado",
-            "alerta": "Agente automatizado",
+            # Bloco 21 — fix: "alerta" tinha o mesmo formato de "agente",
+            # errado. Bug real (Cenário 4, 06/09): qualquer demanda com
+            # "alerta" no texto (ex.: "alerta automático") saía com
+            # resultado_esperado = "Agente automatizado", mesmo sendo uma
+            # demanda Alarmística de verdade. Formato próprio agora.
+            "alerta": "Alerta automático",
         }
         texto_lower = turno_conteudo.lower()
         for chave, formato in PALAVRAS_FORMATO_EXPLICITO.items():
@@ -646,8 +661,19 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         # dispara nessa colisão específica — não adiciona pergunta nenhuma
         # nos casos que já funcionam (a esmagadora maioria, com só uma
         # categoria de palavra-chave presente ou nenhuma).
+        #
+        # Bloco 21 — fix: essa guarda só cobria AMBIGUIDADE (2+ categorias
+        # batendo ao mesmo tempo), não FALTA DE CONTEÚDO. Bug real (Cenário
+        # 5a, 06/09, GPU_LOCAL, sessão limpa confirmada): o turno "Segue o
+        # briefing que recebi do time comercial do Ibmec, anexei o
+        # documento." não bate nenhuma categoria (por isso passava direto
+        # nessa guarda), mas o Qwen "alucinou" tipo_demanda="Alarmística"
+        # mesmo assim, sem base real nenhuma no texto — e como não tinha
+        # ambiguidade, não tinha Radio, e o valor errado ficava travado
+        # silenciosamente. Reaproveitando _parece_apenas_transmissao (já
+        # usada em objetivo, Bloco 18) pra também bloquear esse caso.
         categorias_no_texto = _categorias_tipo_demanda_no_texto(turno_conteudo)
-        if len(categorias_no_texto) < 2:
+        if len(categorias_no_texto) < 2 and not _parece_apenas_transmissao(turno_conteudo):
             try:
                 demanda.tipo_demanda = TipoDemanda(dados["tipo_demanda"])
             except ValueError:
@@ -667,7 +693,15 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
     # e processar_confirmacao_valor_negocio abaixo), mesmo princípio já
     # usado em perguntas_de_negocio.
 
-    if dados.get("classificacao_estrategica") and not demanda.classificacao_estrategica:
+    if (
+        dados.get("classificacao_estrategica")
+        and not demanda.classificacao_estrategica
+        # Bloco 21 — fix: mesma causa do bug de tipo_demanda acima — esse
+        # campo nunca teve NENHUMA guarda (nem ambiguidade, nem transmissão).
+        # Bug real (Cenário 5a, 06/09): mesmo turno de transmissão pura virou
+        # classificacao_estrategica="Estruturante" sem base nenhuma no texto.
+        and not _parece_apenas_transmissao(turno_conteudo)
+    ):
         classificacoes = []
         for c in dados["classificacao_estrategica"]:
             try:
