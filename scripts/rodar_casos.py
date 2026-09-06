@@ -44,6 +44,7 @@ from graph.agent import (
     construir_grafo,
     processar_turno,
     processar_confirmacao_pergunta_negocio,
+    processar_confirmacao_valor_negocio,
     obter_modo_ativo,
 )
 
@@ -134,8 +135,9 @@ def _fechar_caso(agente, sessao: SessionState, campo_atual: str, sugestao_pergun
     """Continua o roteiro dinamicamente até PRONTA (ou até o limite de
     segurança), usando respostas_por_campo pros campos com resposta
     canned e o fluxo real de confirmação (não texto livre) para
-    perguntas_de_negocio — esse campo nunca é extraído do texto do
-    usuário (ver aplicar_extracao em graph/agent.py). `sugestao_pergunta`
+    perguntas_de_negocio e valor_negocio — nenhum dos dois é mais extraído
+    do texto do usuário (ver aplicar_extracao em graph/agent.py).
+    `sugestao_pergunta`
     é passada como variável local entre iterações (não fica guardada no
     objeto SessionState — é Pydantic, não aceita atributo extra não
     declarado no schema).
@@ -167,6 +169,20 @@ def _fechar_caso(agente, sessao: SessionState, campo_atual: str, sugestao_pergun
                 )
             sessao = processar_confirmacao_pergunta_negocio(sessao, sugestao_pergunta)
             resultado = processar_turno(agente, sessao, "__sugestao_pergunta__")
+        elif campo_atual == "valor_negocio":
+            # valor_negocio agora só é aplicado via confirmação de Radio
+            # (fechamento Ato 2/3 — ver graph/agent.py), nunca por texto
+            # livre parseado pelo Qwen. respostas_por_campo["valor_negocio"]
+            # precisa ser um dos 3 valores exatos do enum (ex.: "Tático",
+            # sem pontuação) — o runner simula o clique do Radio, não uma
+            # resposta digitada.
+            if "valor_negocio" not in respostas_por_campo:
+                return sessao, turnos_usados, (
+                    "campo_prioritario_atual == 'valor_negocio' mas não há resposta prevista "
+                    "em respostas_por_campo — ajuste o caso de teste"
+                )
+            sessao = processar_confirmacao_valor_negocio(sessao, respostas_por_campo["valor_negocio"])
+            resultado = processar_turno(agente, sessao, "__radio__")
         elif campo_atual in respostas_por_campo:
             resultado = processar_turno(agente, sessao, respostas_por_campo[campo_atual])
         else:
