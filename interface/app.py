@@ -39,29 +39,43 @@ OPCOES_RESULTADO = [
 # tipo_demanda ganhou Radio (Bloco 07) pelo mesmo motivo que resultado_esperado
 # e classificacao_estrategica já tinham: campo com opções fixas conhecidas —
 # não faz sentido depender do Qwen classificar corretamente em texto livre,
-# principalmente em modos com modelo menor (CPU_LOCAL). Valores idênticos aos
-# do enum TipoDemanda — TipoDemanda(selecao) precisa bater exatamente.
+# principalmente em modos com modelo menor (CPU_LOCAL).
+#
+# Achado (06/09, roteiro de teste ao vivo): a pergunta fixa (PERGUNTAS_FIXAS,
+# graph/agent.py) já traduz cada categoria em linguagem simples pro usuário
+# ("...uma Análise pontual, um Produto de Dados (dashboard ou agente)..."),
+# mas os BOTÕES do Radio mostravam só o rótulo técnico da categoria, sem essa
+# explicação — quem não conhece de cor a taxonomia tinha que adivinhar o que
+# cada nome quer dizer bem na hora de decidir. Cada item agora é uma tupla
+# (rótulo mostrado no botão, valor real) — Gradio manda pro handler só o
+# valor (2º item), que continua idêntico ao enum TipoDemanda
+# (TipoDemanda(selecao) precisa bater exatamente); só o texto do BOTÃO ganhou
+# a explicação, mesma frase-base da pergunta fixa.
 OPCOES_TIPO_DEMANDA = [
-    "Análise",
-    "Produto de Dados",
-    "Estruturante",
-    "Alarmística",
+    ("Análise — pontual, investigação", "Análise"),
+    ("Produto de Dados — dashboard, painel, agente", "Produto de Dados"),
+    ("Estruturante — pipeline, tabela Gold", "Estruturante"),
+    ("Alarmística — alertas, monitoramento", "Alarmística"),
 ]
 
-# valor_negocio ganhou Radio nesta sessão (fechamento Ato 2/3) pelo mesmo
-# motivo de tipo_demanda: campo de classificação fixa (3 opções). Diferente
-# de tipo_demanda, aqui NÃO existe mais nenhum caminho de auto-preenchimento
-# por texto livre — o próprio PROMPT_EXTRAIR nunca deu ao Qwen uma palavra-
-# chave confiável pra esse campo (só "infira pelo contexto"), e o resultado
-# foi errar 3 de 3 vezes em teste real, nos dois tamanhos de modelo (Qwen3-
-# 1.7B e Qwen3-4B), sempre confundindo "Tático" com "Operacional" (ver
-# claude/ato3_kickoff.md, achado de valor_negocio, caso C004). Valores
-# idênticos ao enum ValorNegocio — ValorNegocio(selecao) precisa bater
-# exatamente.
+# valor_negocio ganhou Radio no fechamento do Ato 2/3 pelo mesmo motivo de
+# tipo_demanda: campo de classificação fixa (3 opções). Diferente de
+# tipo_demanda, aqui NÃO existe mais nenhum caminho de auto-preenchimento por
+# texto livre — o próprio PROMPT_EXTRAIR nunca deu ao Qwen uma palavra-chave
+# confiável pra esse campo (só "infira pelo contexto"), e o resultado foi
+# errar 3 de 3 vezes em teste real, nos dois tamanhos de modelo (Qwen3-1.7B e
+# Qwen3-4B), sempre confundindo "Tático" com "Operacional" (ver
+# claude/ato3_kickoff.md, achado de valor_negocio, caso C004).
+#
+# Mesmo achado do tipo_demanda acima (06/09): a pergunta fixa já traduz em
+# linguagem simples ("...decisões do dia a dia, decisões de médio prazo ou o
+# direcionamento estratégico..."), os botões do Radio não. Mesma solução —
+# tupla (rótulo explicado, valor). O valor (2º item) continua idêntico ao
+# enum ValorNegocio — ValorNegocio(selecao) precisa bater exatamente.
 OPCOES_VALOR_NEGOCIO = [
-    "Operacional",
-    "Tático",
-    "Estratégico",
+    ("Operacional — dia a dia", "Operacional"),
+    ("Tático — médio prazo", "Tático"),
+    ("Estratégico — direcionamento do negócio", "Estratégico"),
 ]
 
 # ────────────────────────────────────────────────────────────
