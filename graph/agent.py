@@ -303,6 +303,26 @@ Regras:
 
 Perguntas sugeridas:"""
 
+# Bloco 22 — geração automática de titulo, ver gerar_titulo() e o novo bloco
+# em no_avaliar_completude abaixo. Usa só o ESTADO JÁ CONFIRMADO da demanda
+# (nunca o texto bruto dos turnos) — mesmo princípio de segurança já usado
+# em objetivo/tipo_demanda (evitar alucinação a partir de frase solta).
+PROMPT_GERAR_TITULO = """Você é um assistente especializado em refinamento de demandas de dados.
+
+Com base no estado já confirmado da demanda abaixo, gere UM título curto e
+descritivo para ela — o tipo de nome que apareceria numa lista de demandas
+(exemplos: "Alerta de evasão no Digital", "Dashboard de captação do
+Semipresencial", "Análise de queda de renovação do Ibmec").
+
+Estado confirmado da demanda: {contexto}
+
+Regras:
+- No máximo 8 palavras.
+- Sem aspas, sem ponto final, sem explicações — responda só com o título.
+- Nunca invente números, marcas ou métricas que não estejam no estado acima.
+
+Título:"""
+
 PROMPT_PERGUNTA = """Você é um assistente especializado em refinamento de demandas de dados.
 
 Campo prioritário a preencher agora: {campo_prioritario}
@@ -782,6 +802,25 @@ def no_extrair_campos(state: GraphState) -> GraphState:
     return state
 
 
+def gerar_titulo(demanda: DemandState) -> Optional[str]:
+    """Bloco 22 — gera um título curto a partir do estado JÁ CONFIRMADO da
+    demanda (nunca do texto bruto dos turnos, pelo mesmo motivo que
+    objetivo/tipo_demanda evitam frase de transmissão: só usa o que já
+    passou pelas guardas de cada campo). Retorna None se a geração vier
+    vazia ou claramente inválida — quem chama decide o fallback.
+    """
+    contexto = estado_para_texto(demanda)
+    if not contexto.strip():
+        return None
+    prompt = PROMPT_GERAR_TITULO.format(contexto=contexto)
+    bruto, _ = chamar_llm(prompt, max_tokens=40)
+    titulo = bruto.strip().strip('"').strip("'").strip().rstrip(".")
+    titulo = titulo.splitlines()[0].strip() if titulo else ""
+    if not titulo or len(titulo) > 80:
+        return None
+    return titulo
+
+
 def no_avaliar_completude(state: GraphState) -> GraphState:
     sessao = state["sessao"]
     demanda = sessao.demanda_ativa
@@ -800,6 +839,25 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
             origem=OrigemCampo.RULE,
             turno=demanda.turno_atual,
         )
+
+    # Bloco 22 — geração automática de titulo (regra, sem pergunta dedicada).
+    # titulo é sempre o ÚLTIMO campo na ordem de campos_vazios() — então, quando
+    # ele é o ÚNICO que falta, todo o resto já foi confirmado e o agente pode
+    # gerar um título sozinho em vez de perguntar em texto livre. Motivo: a
+    # extração por resposta livre desse campo se mostrou frágil (ver
+    # ato3_kickoff.md, achado de 06/09 — Qwen às vezes não reconhece uma
+    # resposta curta como título, mesmo com o guarda correto). Se a geração
+    # falhar ou vier vazia, titulo continua vazio e cai de volta na pergunta
+    # antiga (no_formular_pergunta/PERGUNTAS_FIXAS["titulo"]) — nunca falha
+    # silenciosamente.
+    if demanda.titulo is None and campos_vazios(demanda) == ["titulo"]:
+        titulo_gerado = gerar_titulo(demanda)
+        if titulo_gerado:
+            demanda.titulo = FieldProvenance(
+                valor=titulo_gerado,
+                origem=OrigemCampo.RULE,
+                turno=demanda.turno_atual,
+            )
 
     # Verificar dependência de Estruturante
     # DESATIVADO no Ato 1 — fluxo multi-demanda será trabalhado no Ato 2
