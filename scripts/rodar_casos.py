@@ -45,6 +45,9 @@ from graph.agent import (
     processar_turno,
     processar_confirmacao_pergunta_negocio,
     processar_confirmacao_valor_negocio,
+    processar_confirmacao_tipo_demanda,
+    processar_confirmacao_resultado_esperado,
+    processar_selecao_checkbox,
     obter_modo_ativo,
 )
 
@@ -183,6 +186,49 @@ def _fechar_caso(agente, sessao: SessionState, campo_atual: str, sugestao_pergun
                 )
             sessao = processar_confirmacao_valor_negocio(sessao, respostas_por_campo["valor_negocio"])
             resultado = processar_turno(agente, sessao, "__radio__")
+        elif campo_atual == "tipo_demanda":
+            # Bloco 25 — mesmo princípio de valor_negocio, agora possível
+            # graças ao Bloco 24 (processar_confirmacao_tipo_demanda extraída
+            # de interface/app.py). respostas_por_campo["tipo_demanda"]
+            # precisa ser um dos 3 valores exatos do enum TipoDemanda.
+            if "tipo_demanda" not in respostas_por_campo:
+                return sessao, turnos_usados, (
+                    "campo_prioritario_atual == 'tipo_demanda' mas não há resposta prevista "
+                    "em respostas_por_campo — ajuste o caso de teste"
+                )
+            sessao = processar_confirmacao_tipo_demanda(sessao, respostas_por_campo["tipo_demanda"])
+            resultado = processar_turno(agente, sessao, "__radio__")
+        elif campo_atual == "resultado_esperado":
+            # Bloco 25 — idem, via processar_confirmacao_resultado_esperado
+            # (Bloco 24). Só deveria ser perguntado quando tipo_demanda ==
+            # Produto de Dados (Análise/Alarmística são sempre inferidos por
+            # regra, nunca chegam aqui) — se um caso cair nesse branch com
+            # outro tipo, é sinal de regressão no Bloco 23, não do teste.
+            if "resultado_esperado" not in respostas_por_campo:
+                return sessao, turnos_usados, (
+                    "campo_prioritario_atual == 'resultado_esperado' mas não há resposta prevista "
+                    "em respostas_por_campo — ajuste o caso de teste (se tipo_demanda não for "
+                    "'Produto de Dados' aqui, é sinal de regressão no Bloco 23, não do teste)"
+                )
+            sessao = processar_confirmacao_resultado_esperado(sessao, respostas_por_campo["resultado_esperado"])
+            resultado = processar_turno(agente, sessao, "__radio__")
+        elif campo_atual == "classificacao_estrategica":
+            # classificacao_estrategica continua extraível em texto livre
+            # (aplicar_extracao, sem o histórico de erro 3/3 que tirou
+            # valor_negocio/tipo_demanda/resultado_esperado desse caminho) —
+            # mas usamos o checkbox direto aqui mesmo assim, por
+            # determinismo no script de avaliação: respostas_por_campo
+            # ["classificacao_estrategica"] é uma lista de valores exatos do
+            # enum (ou uma string única, tratada como lista de 1 item).
+            if "classificacao_estrategica" not in respostas_por_campo:
+                return sessao, turnos_usados, (
+                    "campo_prioritario_atual == 'classificacao_estrategica' mas não há resposta "
+                    "prevista em respostas_por_campo — ajuste o caso de teste"
+                )
+            valor = respostas_por_campo["classificacao_estrategica"]
+            valores = valor if isinstance(valor, list) else [valor]
+            sessao = processar_selecao_checkbox(sessao, valores)
+            resultado = processar_turno(agente, sessao, "__checkbox__")
         elif campo_atual in respostas_por_campo:
             resultado = processar_turno(agente, sessao, respostas_por_campo[campo_atual])
         else:
