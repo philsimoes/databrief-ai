@@ -224,14 +224,18 @@ Campos já preenchidos (não sobrescreva): {estado_atual}
 
 Extraia apenas o que está explícito. Para cada campo, siga:
 - objetivo: O que o usuário quer saber ou monitorar. Extraia sempre que possível.
-- tipo_demanda: Use EXATAMENTE um destes valores ou null:
-  "Produto de Dados" → dashboard, relatório automatizado, painel, agente
+- tipo_demanda: Use EXATAMENTE um destes valores ou null (Bloco 23 — "Estruturante"
+  foi removida; pipeline/tabela Gold/engenharia de dados agora contam como
+  Produto de Dados, porque na prática sempre serviam de base pra um produto ou
+  alerta final, nunca eram um pedido de negócio isolado):
+  "Produto de Dados" → dashboard, relatório automatizado, painel, agente, pipeline, tabela Gold, engenharia de dados
   "Análise" → análise pontual, investigação, entender algo
-  "Estruturante" → pipeline, tabela Gold, engenharia de dados
   "Alarmística" → alerta, monitoramento com aviso, "sempre que", "quando X acontecer", receber notificação, receber e-mail, receber mensagem no Teams/Slack/WhatsApp/SMS, aviso automático, disparar alerta
   Na dúvida: null
-- resultado_esperado: Formato técnico de entrega. Extraia APENAS se o usuário disse
-  explicitamente "dashboard", "agente", "tabela", "pipeline". Não extraia se descreveu só o tema.
+- resultado_esperado: Formato técnico de entrega — só se aplica a Produto de Dados
+  (Análise e Alarmística têm resultado sempre inferido por regra, nunca perguntado).
+  Extraia APENAS se o usuário disse explicitamente "dashboard", "agente", "tabela
+  Gold". Não extraia se descreveu só o tema.
 - valor_negocio: NÃO extraia esse campo. Sempre confirmado via Radio dedicado na
   interface (Operacional / Tático / Estratégico) — nunca a partir de texto livre.
   Errou 3 de 3 vezes em teste real, nos dois tamanhos de modelo, sempre confundindo
@@ -260,12 +264,12 @@ PERGUNTAS_FIXAS = {
         "ou o direcionamento estratégico do negócio?"
     ),
     "resultado_esperado": (
-        "Como será entregue — um dashboard interativo, um agente automatizado "
-        "ou outro formato técnico?"
+        "Como será entregue — um dashboard interativo, uma tabela Gold "
+        "ou um agente automatizado?"
     ),
     "tipo_demanda": (
-        "Essa demanda é uma Análise pontual, um Produto de Dados (dashboard ou agente), "
-        "uma Estruturante (pipeline/tabela Gold) ou uma Alarmística (monitoramento com alertas)?"
+        "Essa demanda é uma Análise pontual, um Produto de Dados (dashboard, "
+        "tabela Gold ou agente) ou uma Alarmística (monitoramento com alertas)?"
     ),
     "titulo": (
         "Como você chamaria essa demanda? Pode ser um nome curto e descritivo."
@@ -449,13 +453,15 @@ _PADROES_SEM_RESPOSTA = (
 # programático (contar categorias no texto), não texto de prompt.
 _PALAVRAS_TIPO_DEMANDA = {
     "Produto de Dados": (
+        # Bloco 23 — "pipeline"/"tabela gold"/"engenharia de dados" migraram
+        # pra cá quando a categoria "Estruturante" foi removida (ver
+        # TipoDemanda em schemas/models.py): na prática sempre serviam de
+        # base pra um produto/alerta final, nunca eram pedido isolado.
         "dashboard", "painel", "relatório automatizado", "relatorio automatizado", "agente",
+        "pipeline", "tabela gold", "engenharia de dados",
     ),
     "Análise": (
         "análise pontual", "analise pontual", "investigação", "investigacao", "entender algo",
-    ),
-    "Estruturante": (
-        "pipeline", "tabela gold", "engenharia de dados",
     ),
     "Alarmística": (
         "alerta", "monitoramento", "sempre que", "receber notificação", "receber notificacao",
@@ -630,13 +636,15 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         # devolvesse desde que "parecesse" um formato válido, sem nunca
         # conferir contra o texto real do usuário; agora a fonte da verdade
         # é sempre turno_conteudo, em qualquer turno (não só o primeiro).
+        # Bloco 23 — "Pipeline de dados" e "Modelo analítico" saíram das
+        # opções válidas de resultado_esperado junto com a remoção da
+        # categoria "Estruturante" (ver TipoDemanda em schemas/models.py):
+        # Produto de Dados agora só entrega Dashboard / Tabela Gold / Agente.
         PALAVRAS_FORMATO_EXPLICITO = {
             "dashboard": "Dashboard interativo",
             "painel": "Dashboard interativo",
             "consolidar": "Dashboard interativo",
-            "pipeline": "Pipeline de dados",
             "tabela gold": "Tabela Gold",
-            "modelo analítico": "Modelo analítico",
             "agente automatizado": "Agente automatizado",
             "agente": "Agente automatizado",
             "chatbot": "Agente automatizado",
@@ -840,6 +848,23 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
             turno=demanda.turno_atual,
         )
 
+    # Bloco 23 — Inferência automática: Alarmística → resultado_esperado
+    # sempre "Alerta automático". Regra: por definição uma Alarmística É um
+    # monitoramento com alertas (ver PERGUNTAS_FIXAS["tipo_demanda"]) — não
+    # existe formato de entrega alternativo pra esse tipo, então perguntar é
+    # redundante. Mesmo padrão da inferência de Análise acima; diferente dela,
+    # não depende de nenhum outro campo (o valor é sempre o mesmo), então
+    # pode disparar assim que tipo_demanda vira Alarmística, mesmo no 1º turno.
+    if (
+        demanda.tipo_demanda == TipoDemanda.ALARMASTICA
+        and demanda.resultado_esperado is None
+    ):
+        demanda.resultado_esperado = FieldProvenance(
+            valor="Alerta automático",
+            origem=OrigemCampo.RULE,
+            turno=demanda.turno_atual,
+        )
+
     # Bloco 22 — geração automática de titulo (regra, sem pergunta dedicada).
     # titulo é sempre o ÚLTIMO campo na ordem de campos_vazios() — então, quando
     # ele é o ÚNICO que falta, todo o resto já foi confirmado e o agente pode
@@ -861,7 +886,11 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
 
     # Verificar dependência de Estruturante
     # DESATIVADO no Ato 1 — fluxo multi-demanda será trabalhado no Ato 2
-    # A lógica está preservada abaixo, comentada, para reativar no Ato 2
+    # A lógica está preservada abaixo, comentada, para reativar no Ato 2.
+    # Bloco 23: a categoria TipoDemanda.ESTRUTURANTE foi removida — se esse
+    # bloco for reativado, revisar DEPENDE_SEMPRE_DE_ESTRUTURANTE/
+    # analise_depende_de_gold em schemas/models.py primeiro (o conceito de
+    # "depende de Estruturante" não existe mais como tipo separado).
     # precisa_estruturante = (
     #     demanda.tipo_demanda in DEPENDE_SEMPRE_DE_ESTRUTURANTE
     #     or (demanda.tipo_demanda == TipoDemanda.ANALISE
