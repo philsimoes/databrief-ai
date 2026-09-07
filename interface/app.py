@@ -33,6 +33,8 @@ OPCOES_CLASSIFICACAO = [c.value for c in ClassificacaoEstrategica]
 # analítico"/"Outro" saíram junto com a remoção de TipoDemanda.ESTRUTURANTE —
 # decisão do Phil (06/09, como gerente de dados): Produto de Dados só entrega
 # um destes três formatos, sem válvula de escape.
+# (Nota: este arquivo tinha ido com a mensagem de commit do casos_teste.py por engano — corrigido aqui.)
+
 OPCOES_RESULTADO = [
     "Dashboard interativo",
     "Tabela Gold",
