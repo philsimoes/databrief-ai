@@ -22,10 +22,58 @@
 # negócio verdadeiros em vez de uma empresa genérica.
 #
 # Cada caso é rodado programaticamente via processar_turno(), turno a
-# turno, sem interação manual no Gradio. Hoje isso é feito por
-# scripts/rodar_casos.py (runner manual, Bloco 10) — um relatório
-# campo a campo pra revisão humana, não o script de métricas completo
-# do item 3 do Ato 3 (F1, recall, latência etc.), que ainda não existe.
+# turno, sem interação manual no Gradio. Isso é feito por
+# scripts/rodar_casos.py (runner, Bloco 10/13) — que agora (Bloco 25)
+# consegue fechar TODO caso até PRONTA, não só os antigos "casos
+# fechados" — ver "respostas_por_campo agora universal" abaixo.
+#
+# Bloco 25 (07/09) — dois campos novos, presentes em TODOS os 10 casos:
+#   respostas_por_campo — deixou de ser exclusivo de "casos fechados"
+#       (a minoria, como o antigo C006). Bloco 24 criou
+#       processar_confirmacao_tipo_demanda()/processar_confirmacao_
+#       resultado_esperado() em graph/agent.py (mesmo padrão que já
+#       existia pra valor_negocio) — o runner agora consegue simular o
+#       clique de QUALQUER Radio/checkbox sem depender do Gradio, então
+#       todo caso ganhou respostas pra fechar até o fim, viabilizando
+#       gabarito_final (abaixo) pra F1/recall no script de avaliação
+#       (scripts/avaliar.py, Ato 3 item 3). Continua servindo pro papel
+#       original também (achar bugs rodando ao vivo).
+#       Valores por campo, conforme o mecanismo real de cada um:
+#         tipo_demanda / resultado_esperado — valor exato do enum (o
+#           runner chama processar_confirmacao_* direto, como um clique
+#           real de Radio — nunca texto livre pro Qwen re-extrair,
+#           mesmo motivo que tirou esses 2 campos da extração de texto
+#           livre desde o fechamento do Ato 2/3).
+#         classificacao_estrategica — lista de valores exatos do enum
+#           (runner usa processar_selecao_checkbox direto, por
+#           determinismo — embora esse campo ainda seja extraível em
+#           texto livre também, diferente dos 2 acima).
+#         valor_negocio — igual, valor exato do enum (já existia).
+#         demais campos (objetivo, titulo) — texto livre normal.
+#         perguntas_de_negocio NUNCA entra aqui — o runner trata esse
+#           campo automaticamente (aceita a sugestão do Qwen), porque
+#           esse campo nunca é preenchido por texto livre digitado.
+#       Campos já esperados vir do(s) turno(s) principal(is) (ver
+#       campos_esperados_apos_turnos) ganham uma resposta aqui mesmo
+#       assim, como rede de segurança — se a extração não pegar numa
+#       rodada ao vivo (o Qwen é não-determinístico), o caso ainda
+#       fecha em vez de travar no limite de segurança.
+#   gabarito_final — valor esperado de cada um dos 7 campos universais
+#       no ESTADO FINAL (depois de fechado até PRONTA) — usado pelo F1
+#       por campo e pelo recall de lacunas (scripts/avaliar.py).
+#       Campos categóricos (tipo_demanda, valor_negocio,
+#       classificacao_estrategica, e resultado_esperado quando
+#       tipo_demanda == Produto de Dados) são comparados por igualdade
+#       exata — F1 automático de verdade. resultado_esperado quando
+#       tipo_demanda == Análise é "Análise: {objetivo}" — só a
+#       ESTRUTURA (prefixo + origem RULE) é checada automaticamente, o
+#       texto do objetivo embutido varia e entra na revisão humana.
+#       Campos de texto livre (titulo, objetivo, bloqueios,
+#       link_evidencia) são reportados lado a lado (gabarito vs.
+#       obtido) mas a correção é julgada por você no mesmo mecanismo de
+#       veredito da concordância humana — comparar string exata com um
+#       LLM não-determinístico seria enganoso. perguntas_de_negocio é
+#       só informacional (não entra no F1).
 #
 # Schema de cada caso:
 #   id                          — ex: "C001"
@@ -91,8 +139,24 @@ CASOS = [
         ],
         "campos_esperados_apos_turnos": {},
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
-        "observacoes": "objetivo pode ser inferido do texto, mas tipo_demanda fica None — este é o caso que motivou o Bloco 08 (Radio de tipo_demanda). Enfermagem citada de propósito: passou a ser exclusiva do presencial no novo marco regulatório, tema real e atual da YDUQS.",
+        "turnos_ate_pronta_esperado": 6,
+        "respostas_por_campo": {
+            "objetivo": "Entender os principais motivos da evasão de alunos no curso de Enfermagem da Estácio.",
+            "tipo_demanda": "Análise",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "titulo": "Evasão no curso de Enfermagem da Estácio",
+        },
+        "gabarito_final": {
+            "titulo": "Evasão no curso de Enfermagem da Estácio",
+            "tipo_demanda": "Análise",
+            "objetivo": "Entender os principais motivos da evasão de alunos no curso de Enfermagem da Estácio.",
+            "resultado_esperado": "Análise: Entender os principais motivos da evasão de alunos no curso de Enfermagem da Estácio.",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "perguntas_de_negocio": ["Quais são os principais motivos da evasão no curso de Enfermagem da Estácio?"],
+        },
+        "observacoes": "objetivo pode ser inferido do texto, mas tipo_demanda fica None — este é o caso que motivou o Bloco 08 (Radio de tipo_demanda). Enfermagem citada de propósito: passou a ser exclusiva do presencial no novo marco regulatório, tema real e atual da YDUQS. Bloco 25: tipo_demanda escolhido como Análise pra fechamento (decisão de design do caso, não extração — o texto por si só não define isso, por design).",
     },
 
     # ────────────────────────────────────────────────────────────
@@ -117,8 +181,27 @@ CASOS = [
             "objetivo": "acompanhar a captação do Semipresencial por polo de EaD",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
-        "observacoes": "tipo_demanda deve vir preenchido pelo Qwen (PROMPT_EXTRAIR mapeia 'dashboard' → Produto de Dados) sem precisar do Radio. Semipresencial é a modalidade que mais cresce na YDUQS (CAGR de 41% segundo a apresentação corporativa) — tema de peso real.",
+        "turnos_ate_pronta_esperado": 4,
+        "respostas_por_campo": {
+            # fallbacks — "dashboard" já é gatilho de PALAVRAS_FORMATO_EXPLICITO,
+            # tipo_demanda e resultado_esperado devem vir de TEXT já no turno 1;
+            # respostas aqui só entram em jogo se a extração falhar na rodada
+            "tipo_demanda": "Produto de Dados",
+            "resultado_esperado": "Dashboard interativo",
+            "valor_negocio": "Estratégico",
+            "classificacao_estrategica": ["Monitoramento"],
+            "titulo": "Captação do Semipresencial por polo de EaD",
+        },
+        "gabarito_final": {
+            "titulo": "Captação do Semipresencial por polo de EaD",
+            "tipo_demanda": "Produto de Dados",
+            "objetivo": "acompanhar a captação do Semipresencial por polo de EaD",
+            "resultado_esperado": "Dashboard interativo",
+            "valor_negocio": "Estratégico",
+            "classificacao_estrategica": ["Monitoramento"],
+            "perguntas_de_negocio": ["Qual polo de EaD está com a menor captação do Semipresencial?"],
+        },
+        "observacoes": "tipo_demanda deve vir preenchido pelo Qwen (PROMPT_EXTRAIR mapeia 'dashboard' → Produto de Dados) sem precisar do Radio. Semipresencial é a modalidade que mais cresce na YDUQS (CAGR de 41% segundo a apresentação corporativa) — tema de peso real. Bloco 25: valor_negocio escolhido como Estratégico (pedido é da diretoria comercial) — decisão de design do caso.",
     },
 
     # ────────────────────────────────────────────────────────────
@@ -155,7 +238,26 @@ CASOS = [
             "link_evidencia": "https://chamados.yduqs.com.br/TICKET-4521",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
+        "turnos_ate_pronta_esperado": 5,
+        "respostas_por_campo": {
+            "objetivo": "estruturar a camada Gold de matrículas a partir da Silver de captação para viabilizar os dashboards de Estácio & Wyden",
+            "tipo_demanda": "Produto de Dados",
+            "resultado_esperado": "Dashboard interativo",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Priorização"],
+            "titulo": "Estruturação da camada Gold de matrículas Estácio & Wyden",
+        },
+        "gabarito_final": {
+            "titulo": "Estruturação da camada Gold de matrículas Estácio & Wyden",
+            "tipo_demanda": "Produto de Dados",
+            "objetivo": "estruturar a camada Gold de matrículas a partir da Silver de captação para viabilizar os dashboards de Estácio & Wyden",
+            "resultado_esperado": "Dashboard interativo",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Priorização"],
+            "bloqueios": "depende da liberação de acesso da equipe de Engenharia",
+            "link_evidencia": "https://chamados.yduqs.com.br/TICKET-4521",
+            "perguntas_de_negocio": ["Quando a equipe de Engenharia libera o acesso necessário?"],
+        },
         "observacoes": "bloqueios e link_evidencia são opcionais no schema — este caso confirma que, quando mencionados, entram com origem TEXT e não ficam de fora do briefing. Nota (Bloco 23): expectativa de tipo_demanda mudou de 'Estruturante' pra 'Produto de Dados' — ver comentário do bloco acima.",
     },
 
@@ -183,7 +285,23 @@ CASOS = [
             "classificacao_estrategica": ["Eficiência Operacional"],
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
+        "turnos_ate_pronta_esperado": 4,
+        "respostas_por_campo": {
+            "objetivo": "monitorar a taxa de evasão no ensino Digital para agir antes de fechar o trimestre",
+            "tipo_demanda": "Alarmística",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Eficiência Operacional"],
+            "titulo": "Alerta de evasão no Digital",
+        },
+        "gabarito_final": {
+            "titulo": "Alerta de evasão no Digital",
+            "tipo_demanda": "Alarmística",
+            "objetivo": "monitorar a taxa de evasão no ensino Digital para agir antes de fechar o trimestre",
+            "resultado_esperado": "Alerta automático",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Eficiência Operacional"],
+            "perguntas_de_negocio": ["A taxa de evasão no Digital já ultrapassou 8% em alguma marca recentemente?"],
+        },
         "observacoes": (
             "resultado_esperado e perguntas_de_negocio ainda ficam pendentes — mede quantos "
             "dos 7 campos universais o Qwen extrai de um turno denso (métrica de recall por "
@@ -228,8 +346,28 @@ CASOS = [
             "objetivo": "comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
-        "observacoes": "campo crítico deste caso: resultado_esperado NÃO deve aparecer em campos_vazios() após este turno, mesmo sem ter sido dito explicitamente — é a regra de inferência documentada no docstring de campos_vazios().",
+        "turnos_ate_pronta_esperado": 5,
+        "respostas_por_campo": {
+            # fallback — só entra em jogo se a extração do turno principal falhar
+            "objetivo": "comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial em Estácio & Wyden nos últimos 6 meses",
+            "tipo_demanda": "Análise",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "titulo": "Conversão do funil de captação: Semipresencial vs. Presencial",
+            # resultado_esperado NÃO entra aqui — é inferido automaticamente por
+            # RULE assim que tipo_demanda==Análise e objetivo existem (a regra
+            # que este caso testa), nunca perguntado via Radio.
+        },
+        "gabarito_final": {
+            "titulo": "Conversão do funil de captação: Semipresencial vs. Presencial",
+            "tipo_demanda": "Análise",
+            "objetivo": "comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial em Estácio & Wyden nos últimos 6 meses",
+            "resultado_esperado": "Análise: comparando a taxa de conversão do funil de captação do Semipresencial vs. Presencial em Estácio & Wyden nos últimos 6 meses",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "perguntas_de_negocio": ["Qual modalidade, Semipresencial ou Presencial, tem a maior taxa de conversão no funil de captação?"],
+        },
+        "observacoes": "campo crítico deste caso: resultado_esperado NÃO deve aparecer em campos_vazios() após este turno, mesmo sem ter sido dito explicitamente — é a regra de inferência documentada no docstring de campos_vazios(). Bloco 25: gabarito_final confirma a estrutura esperada ('Análise: ' + objetivo, origem RULE) — a comparação automática do script de avaliação deve checar só o prefixo/origem, não o texto do objetivo embutido (ver nota no cabeçalho do arquivo).",
     },
 
     # ────────────────────────────────────────────────────────────
@@ -250,20 +388,43 @@ CASOS = [
         "turnos_ate_pronta_esperado": 6,
         "respostas_por_campo": {
             "objetivo": "O objetivo é entender por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula.",
-            # "relatório automatizado" (turno principal) não está na lista de gatilhos que o
-            # PROMPT_EXTRAIR dá ao Qwen pra resultado_esperado (dashboard/agente/tabela Gold,
-            # ver Bloco 23 — "pipeline" saiu junto com a remoção de Estruturante)
-            # — testado com mock em 30/08: o campo NÃO veio preenchido automaticamente do turno
-            # principal, caiu mesmo na pergunta fixa. Resposta abaixo usa "agente automatizado",
-            # que É um gatilho explícito dos dois lados (PROMPT_EXTRAIR e PALAVRAS_FORMATO_EXPLICITO).
-            "resultado_esperado": "Um agente automatizado que envia o relatório mensalmente.",
-            # ATUALIZADO (fechamento Ato 2/3): valor_negocio agora só é aplicado via confirmação
-            # de Radio (processar_confirmacao_valor_negocio), não mais por texto livre parseado
-            # pelo Qwen — o runner simula o clique do Radio, então o valor aqui precisa bater
-            # EXATAMENTE com um dos 3 valores do enum ValorNegocio (sem pontuação no final).
+            # CORRIGIDO (Bloco 25) — o comentário antigo aqui dizia que "relatório
+            # automatizado" (texto do turno principal) NÃO estava na lista de
+            # gatilhos de PALAVRAS_FORMATO_EXPLICITO. Isso deixou de ser verdade —
+            # o dict hoje TEM "relatório automatizado": "Agente automatizado" como
+            # chave exata (agent.py). Mas o preenchimento automático não depende só
+            # da palavra bater no texto: o bloco inteiro só roda quando
+            # dados.get("resultado_esperado") já vem preenchido pelo PRÓPRIO Qwen
+            # na extração do turno — a checagem de palavra-chave é uma VALIDAÇÃO
+            # contra alucinação, não um gatilho isolado (ver aplicar_extracao() em
+            # agent.py, condição "if dados.get('resultado_esperado') and not
+            # demanda.resultado_esperado"). Como isso depende do Qwen ser
+            # não-determinístico, resultado_esperado pode vir preenchido via TEXT
+            # já no turno 1 nesta rodada, ou não — a verificar ao vivo (não dá pra
+            # confirmar sem rodar o modelo de verdade). A resposta abaixo serve de
+            # rede de segurança pros dois casos. Valor precisa ser o EXATO do enum
+            # (Bloco 25: resultado_esperado agora é sempre confirmação de Radio
+            # pra Produto de Dados, nunca texto livre — ver processar_confirmacao_
+            # resultado_esperado em agent.py).
+            "resultado_esperado": "Agente automatizado",
+            # valor_negocio só é aplicado via confirmação de Radio
+            # (processar_confirmacao_valor_negocio) — o runner simula o clique,
+            # então o valor aqui precisa bater EXATAMENTE com um dos 3 valores do
+            # enum ValorNegocio (sem pontuação no final).
             "valor_negocio": "Tático",
-            "classificacao_estrategica": "Monitoramento.",
+            "classificacao_estrategica": ["Monitoramento"],
             "titulo": "Renovação de matrícula na pós-graduação do Ibmec",
+        },
+        "gabarito_final": {
+            "titulo": "Renovação de matrícula na pós-graduação do Ibmec",
+            "tipo_demanda": "Produto de Dados",
+            "objetivo": "O objetivo é entender por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula.",
+            "resultado_esperado": "Agente automatizado",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Monitoramento"],
+            "bloqueios": None,
+            "link_evidencia": None,
+            "perguntas_de_negocio": ["Por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula?"],
         },
         "observacoes": (
             "bloqueios e link_evidencia devem ficar None no briefing final e NÃO devem contar como pendência — "
@@ -274,9 +435,10 @@ CASOS = [
             "caminho é a sugestão gerada pelo Qwen a partir do objetivo (PROMPT_SUGERIR_PERGUNTA), confirmada via "
             "processar_confirmacao_pergunta_negocio(). O runner (rodar_casos.py) trata isso automaticamente "
             "quando campo_prioritario_atual == 'perguntas_de_negocio' — não entra em respostas_por_campo. "
-            "turnos_ate_pronta_esperado=5 é uma estimativa (1 principal + objetivo + valor_negocio+classificacao "
-            "em turnos separados + perguntas_de_negocio [automático] + titulo) — pode variar de verdade conforme "
-            "o Qwen agrupar ou não valor_negocio/classificacao_estrategica na mesma resposta."
+            "turnos_ate_pronta_esperado=6 é uma estimativa (1 principal + objetivo + resultado_esperado (se não "
+            "vier de TEXT) + valor_negocio + classificacao_estrategica + perguntas_de_negocio [automático] + "
+            "titulo) — pode variar bastante de verdade conforme o Qwen agrupar campos na mesma resposta ou "
+            "acertar resultado_esperado via TEXT logo no turno 1 (ver nota acima)."
         ),
     },
 
@@ -307,8 +469,25 @@ CASOS = [
             "objetivo": "mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
-        "observacoes": "campo extraído do anexo deve registrar origem=ATTACHMENT e arquivo='briefing_comercial_ibmec.docx' no FieldProvenance — confirma no painel de proveniência.",
+        "turnos_ate_pronta_esperado": 6,
+        "respostas_por_campo": {
+            # fallback — só entra em jogo se a extração do anexo falhar
+            "objetivo": "mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção",
+            "tipo_demanda": "Análise",
+            "valor_negocio": "Estratégico",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "titulo": "Queda de renovação na pós-graduação do Ibmec em São Paulo",
+        },
+        "gabarito_final": {
+            "titulo": "Queda de renovação na pós-graduação do Ibmec em São Paulo",
+            "tipo_demanda": "Análise",
+            "objetivo": "mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção",
+            "resultado_esperado": "Análise: mapear os segmentos de aluno com maior queda de renovação e propor gatilhos de retenção",
+            "valor_negocio": "Estratégico",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "perguntas_de_negocio": ["Quais segmentos de aluno tiveram a maior queda de renovação de matrícula na pós-graduação do Ibmec em São Paulo?"],
+        },
+        "observacoes": "campo extraído do anexo deve registrar origem=ATTACHMENT e arquivo='briefing_comercial_ibmec.docx' no FieldProvenance — confirma no painel de proveniência. Bloco 25: valor_negocio escolhido como Estratégico (pedido vem da diretoria comercial, praça de São Paulo lidera receita da graduação) — decisão de design do caso, não extração.",
     },
 
     # ────────────────────────────────────────────────────────────
@@ -333,7 +512,29 @@ CASOS = [
             "objetivo": "acompanhar em tempo real a fila da Central de Relacionamento do aluno",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
+        "turnos_ate_pronta_esperado": 6,
+        "respostas_por_campo": {
+            # tipo_demanda é decisão de design pro fechamento — o texto é
+            # ambíguo de propósito (painel + monitoramento, ver observação
+            # abaixo), então cai no Radio; Alarmística porque o pedido real é
+            # comparar contra uma meta, não só visualizar.
+            "tipo_demanda": "Alarmística",
+            "objetivo": "acompanhar em tempo real a fila da Central de Relacionamento do aluno",
+            "valor_negocio": "Operacional",
+            "classificacao_estrategica": ["Monitoramento"],
+            "titulo": "Monitoramento da fila da Central de Relacionamento do aluno",
+            # resultado_esperado NÃO entra aqui — Alarmística sempre infere
+            # "Alerta automático" por regra, nunca pergunta via Radio.
+        },
+        "gabarito_final": {
+            "titulo": "Monitoramento da fila da Central de Relacionamento do aluno",
+            "tipo_demanda": "Alarmística",
+            "objetivo": "acompanhar em tempo real a fila da Central de Relacionamento do aluno",
+            "resultado_esperado": "Alerta automático",
+            "valor_negocio": "Operacional",
+            "classificacao_estrategica": ["Monitoramento"],
+            "perguntas_de_negocio": ["O tempo médio de espera da fila da Central de Relacionamento já ultrapassou a meta definida pela diretoria?"],
+        },
         "observacoes": (
             "no ambiente real este conteúdo viria de transcrever_audio(); aqui já entra como texto "
             "transcrito porque o script de avaliação não invoca o Whisper — o que se testa é o "
@@ -373,7 +574,31 @@ CASOS = [
             "tipo_demanda": "Análise",
         },
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
+        "turnos_ate_pronta_esperado": 6,
+        "respostas_por_campo": {
+            # fallback — só entra em jogo se a extração do turno principal falhar
+            "objetivo": "avaliar a campanha de captação do vestibular de Medicina do IDOMED, comparando taxa de preenchimento de vagas por escola médica, canal de conversão e o retorno do desconto nas vagas adicionais",
+            "tipo_demanda": "Análise",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "titulo": "Campanha de captação do vestibular de Medicina do IDOMED",
+        },
+        "gabarito_final": {
+            "titulo": "Campanha de captação do vestibular de Medicina do IDOMED",
+            "tipo_demanda": "Análise",
+            "objetivo": "avaliar a campanha de captação do vestibular de Medicina do IDOMED, comparando taxa de preenchimento de vagas por escola médica, canal de conversão e o retorno do desconto nas vagas adicionais",
+            "resultado_esperado": "Análise: avaliar a campanha de captação do vestibular de Medicina do IDOMED, comparando taxa de preenchimento de vagas por escola médica, canal de conversão e o retorno do desconto nas vagas adicionais",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            # lista de referência (informacional, não entra no F1) — o ideal é
+            # que a sugestão do Qwen capture bem o contexto das 3 perguntas já
+            # mencionadas pelo usuário, mesmo gerando só 1 pergunta de fato.
+            "perguntas_de_negocio": [
+                "Qual escola médica teve a maior taxa de preenchimento de vagas no vestibular de Medicina do IDOMED?",
+                "Qual canal de captação trouxe mais conversão?",
+                "O desconto médio aplicado nas vagas adicionais valeu a pena considerando o ticket médio?",
+            ],
+        },
         "observacoes": (
             "CORRIGIDO (era um erro no lote original): perguntas_de_negocio NUNCA é preenchido por extração de "
             "texto livre — mesmo o usuário listando 3 perguntas aqui, esse campo continua vazio após este turno "
@@ -400,8 +625,26 @@ CASOS = [
         ],
         "campos_esperados_apos_turnos": {},
         "readiness_esperado_apos_turnos": "discovery",
-        "turnos_ate_pronta_esperado": None,
-        "observacoes": "nenhum campo obrigatório é extraível deste turno — confirma que o agente não força PRONTA nem trava, e que a pergunta seguinte é de descoberta (não uma das PERGUNTAS_FIXAS de campo específico).",
+        "turnos_ate_pronta_esperado": 7,
+        "respostas_por_campo": {
+            # caso parte de zero — a resposta à pergunta de descoberta inicial
+            # é o que dá conteúdo real pro resto do fechamento
+            "objetivo": "Preciso entender por que a captação de vestibular caiu no polo de Ibmec em Brasília no último mês.",
+            "tipo_demanda": "Análise",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "titulo": "Queda de captação do vestibular em Ibmec Brasília",
+        },
+        "gabarito_final": {
+            "titulo": "Queda de captação do vestibular em Ibmec Brasília",
+            "tipo_demanda": "Análise",
+            "objetivo": "Preciso entender por que a captação de vestibular caiu no polo de Ibmec em Brasília no último mês.",
+            "resultado_esperado": "Análise: Preciso entender por que a captação de vestibular caiu no polo de Ibmec em Brasília no último mês.",
+            "valor_negocio": "Tático",
+            "classificacao_estrategica": ["Insight para Decisão"],
+            "perguntas_de_negocio": ["Por que a captação do vestibular caiu no polo de Ibmec em Brasília no último mês?"],
+        },
+        "observacoes": "nenhum campo obrigatório é extraível deste turno — confirma que o agente não força PRONTA nem trava, e que a pergunta seguinte é de descoberta (não uma das PERGUNTAS_FIXAS de campo específico). Bloco 25: turnos_ate_pronta_esperado=7 é o maior do lote, por partir de zero — 1 turno principal + os 6 campos universais restantes, todos via pergunta.",
     },
 ]
 
