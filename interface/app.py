@@ -1,10 +1,10 @@
-# ============================================================
+# ===========================================================
 # interface/app.py
 # DataBrief AI — Interface Gradio
 # Chat centralizado + CheckboxGroup para classificacao_estrategica
 # + entrada de áudio (microfone/upload) com transcrição revisável
 # Gradio 5.x / 6.x compatível
-# ============================================================
+# ===========================================================
 
 import gradio as gr
 import json
