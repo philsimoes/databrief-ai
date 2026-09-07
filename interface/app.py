@@ -15,6 +15,7 @@ from schemas.models import (
 from graph.agent import (
     processar_turno, processar_selecao_checkbox,
     processar_confirmacao_pergunta_negocio, processar_confirmacao_valor_negocio,
+    processar_confirmacao_tipo_demanda, processar_confirmacao_resultado_esperado,
     obter_modo_ativo,
 )
 from audio.transcricao import transcrever_audio
@@ -33,8 +34,6 @@ OPCOES_CLASSIFICACAO = [c.value for c in ClassificacaoEstrategica]
 # analítico"/"Outro" saíram junto com a remoção de TipoDemanda.ESTRUTURANTE —
 # decisão do Phil (06/09, como gerente de dados): Produto de Dados só entrega
 # um destes três formatos, sem válvula de escape.
-# (Nota: este arquivo tinha ido com a mensagem de commit do casos_teste.py por engano — corrigido aqui.)
-
 OPCOES_RESULTADO = [
     "Dashboard interativo",
     "Tabela Gold",
@@ -349,7 +348,11 @@ def processar_resposta(historico, sessao_state, origem_mensagem="TEXT", nome_arq
 
 def confirmar_tipo_demanda(selecao, sessao_state, historico):
     """Chamada quando o usuário confirma o Radio de tipo_demanda (Bloco 07).
-    Aplica o valor direto ao estado e avança o grafo.
+    A aplicação do valor ao estado mora em processar_confirmacao_tipo_demanda
+    (graph/agent.py, Bloco 24) — reaproveitada também pelo script de
+    avaliação (Ato 3), que roda os casos sem passar pela UI Gradio. Esta
+    função só cuida do que é específico da tela (histórico do chat,
+    próximo widget a mostrar, barra de progresso).
 
     Nota: tipo_demanda NÃO é wrapeado em FieldProvenance — é um campo enum
     direto em DemandState (mesmo padrão já usado em aplicar_extracao, linha
@@ -367,10 +370,7 @@ def confirmar_tipo_demanda(selecao, sessao_state, historico):
                 gr.update(visible=False), gr.update(value=""))
 
     sessao = SessionState.model_validate(sessao_state)
-    demanda = sessao.demanda_ativa
-
-    demanda.tipo_demanda = TipoDemanda(selecao)
-    sessao.demandas[sessao.indice_ativo] = demanda
+    sessao = processar_confirmacao_tipo_demanda(sessao, selecao)
 
     historico = historico or []
     historico.append({"role": "user", "content": f"Tipo de demanda: {selecao}"})
@@ -460,7 +460,10 @@ def confirmar_classificacao(selecoes, sessao_state, historico):
 
 def confirmar_resultado(selecao, sessao_state, historico):
     """Chamada quando o usuário confirma o Radio de resultado_esperado.
-    Aplica o valor direto ao estado e avança o grafo.
+    A aplicação do valor ao estado mora em
+    processar_confirmacao_resultado_esperado (graph/agent.py, Bloco 24) —
+    mesmo motivo de confirmar_tipo_demanda acima. Esta função só cuida do
+    que é específico da tela.
     """
     if not selecao or not sessao_state:
         return (historico, sessao_state, gr.update(visible=False), "",
@@ -470,16 +473,8 @@ def confirmar_resultado(selecao, sessao_state, historico):
                 gr.update(visible=False), gr.update(value=[]),
                 gr.update(visible=False), gr.update(value=""))
 
-    from schemas.models import FieldProvenance, OrigemCampo
     sessao = SessionState.model_validate(sessao_state)
-    demanda = sessao.demanda_ativa
-
-    demanda.resultado_esperado = FieldProvenance(
-        valor=selecao,
-        origem=OrigemCampo.MANUAL,
-        turno=demanda.turno_atual,
-    )
-    sessao.demandas[sessao.indice_ativo] = demanda
+    sessao = processar_confirmacao_resultado_esperado(sessao, selecao)
 
     historico = historico or []
     historico.append({"role": "user", "content": f"Resultado esperado: {selecao}"})
