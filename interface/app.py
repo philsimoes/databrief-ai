@@ -27,13 +27,16 @@ from attachments.extracao import extrair_texto_anexo
 
 OPCOES_CLASSIFICACAO = [c.value for c in ClassificacaoEstrategica]
 
+# Bloco 23 — só existe pra Produto de Dados agora: Análise e Alarmística têm
+# resultado_esperado sempre inferido por regra (nunca perguntado, ver
+# no_avaliar_completude em graph/agent.py). "Pipeline de dados"/"Modelo
+# analítico"/"Outro" saíram junto com a remoção de TipoDemanda.ESTRUTURANTE —
+# decisão do Phil (06/09, como gerente de dados): Produto de Dados só entrega
+# um destes três formatos, sem válvula de escape.
 OPCOES_RESULTADO = [
     "Dashboard interativo",
-    "Agente automatizado",
-    "Pipeline de dados",
     "Tabela Gold",
-    "Modelo analítico",
-    "Outro",
+    "Agente automatizado",
 ]
 
 # tipo_demanda ganhou Radio (Bloco 07) pelo mesmo motivo que resultado_esperado
@@ -51,10 +54,12 @@ OPCOES_RESULTADO = [
 # valor (2º item), que continua idêntico ao enum TipoDemanda
 # (TipoDemanda(selecao) precisa bater exatamente); só o texto do BOTÃO ganhou
 # a explicação, mesma frase-base da pergunta fixa.
+# Bloco 23 — "Estruturante" removida (decisão do Phil, 06/09): pipeline/
+# tabela Gold/engenharia de dados entram direto em Produto de Dados, que
+# ganhou "tabela Gold" na descrição do botão por causa disso.
 OPCOES_TIPO_DEMANDA = [
     ("Análise — pontual, investigação", "Análise"),
-    ("Produto de Dados — dashboard, painel, agente", "Produto de Dados"),
-    ("Estruturante — pipeline, tabela Gold", "Estruturante"),
+    ("Produto de Dados — dashboard, tabela Gold, agente", "Produto de Dados"),
     ("Alarmística — alertas, monitoramento", "Alarmística"),
 ]
 
@@ -187,7 +192,7 @@ def _bloco_briefing(demanda) -> str:
     completude = demanda.calcular_completude()
     pct = int(completude * 100)
     tipo_nome = {
-        TipoDemanda.ANALISE: "Análise", TipoDemanda.ESTRUTURANTE: "Estruturante",
+        TipoDemanda.ANALISE: "Análise",
         TipoDemanda.PRODUTO_DADOS: "Produto de Dados", TipoDemanda.ALARMASTICA: "Alarmística",
     }.get(demanda.tipo_demanda, "Indefinido")
 
