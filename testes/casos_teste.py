@@ -631,6 +631,24 @@ CASOS = [
             # é o que dá conteúdo real pro resto do fechamento
             "objetivo": "Preciso entender por que a captação de vestibular caiu no polo de Ibmec em Brasília no último mês.",
             "tipo_demanda": "Análise",
+            # ACHADO REAL (1ª rodada ao vivo, GPU_LOCAL, 07/09): este é o único
+            # caso de todo o lote em que o Qwen NÃO ficou em branco a partir do
+            # texto quase sem conteúdo do turno principal — ele extraiu um
+            # objetivo fraco ("ajuda com dados") E JÁ ARRISCOU um tipo_demanda
+            # (que não bateu com "Análise" — F1 tipo_demanda=0.0 nessa rodada),
+            # tudo isso ANTES do Radio de tipo_demanda sequer aparecer (o campo
+            # já não estava mais vazio quando o roteiro chegou nele). Como
+            # tipo_demanda não fica mais None nesse cenário, resultado_esperado
+            # PODE virar campo_prioritario_atual sem que a rota "tipo_demanda"
+            # deste dict jamais seja usada (a inferência automática de Análise
+            # também não roda, já que o tipo virou outra coisa) — sem esta
+            # entrada de fallback, o caso trava aqui (foi exatamente o que
+            # aconteceu na rodada de 07/09). Resposta abaixo é rede de
+            # segurança genérica pra Produto de Dados, o cenário mais provável
+            # quando isso acontece de novo. Não é bug do agente nem do
+            # runner — é o próprio Qwen sendo não-determinístico com um texto
+            # quase vazio; mantido como caso-alerta (ver observação abaixo).
+            "resultado_esperado": "Dashboard interativo",
             "valor_negocio": "Tático",
             "classificacao_estrategica": ["Insight para Decisão"],
             "titulo": "Queda de captação do vestibular em Ibmec Brasília",
@@ -644,7 +662,23 @@ CASOS = [
             "classificacao_estrategica": ["Insight para Decisão"],
             "perguntas_de_negocio": ["Por que a captação do vestibular caiu no polo de Ibmec em Brasília no último mês?"],
         },
-        "observacoes": "nenhum campo obrigatório é extraível deste turno — confirma que o agente não força PRONTA nem trava, e que a pergunta seguinte é de descoberta (não uma das PERGUNTAS_FIXAS de campo específico). Bloco 25: turnos_ate_pronta_esperado=7 é o maior do lote, por partir de zero — 1 turno principal + os 6 campos universais restantes, todos via pergunta.",
+        "observacoes": (
+            "nenhum campo obrigatório é GARANTIDO extraível deste turno (por design, é o mais vago do "
+            "lote) — confirma que o agente não força PRONTA nem trava quando isso acontece. Mas atenção: "
+            "'nenhum campo extraível' é uma expectativa, não uma garantia — na 1ª rodada ao vivo "
+            "(GPU_LOCAL, 07/09) o Qwen extraiu objetivo (fraco: 'ajuda com dados') e um tipo_demanda logo "
+            "do turno principal, mesmo o texto sendo quase vazio, o que fez tipo_demanda/valor_negocio "
+            "baterem F1=0.0 nessa rodada específica (gabarito espera 'Análise', o modelo decidiu outra "
+            "coisa) e travou o fechamento até a resposta de resultado_esperado ser adicionada acima — ver "
+            "o comentário detalhado dentro de respostas_por_campo. Não corrigir isso mudando o texto do "
+            "turno pra 'blindar' contra esse comportamento — o valor deste caso É justamente expor esse "
+            "tipo de reação do modelo a um pedido genérico demais; F1 baixo aqui em algumas rodadas é dado "
+            "real sobre o comportamento do agente com entrada pobre, não ruído do teste. "
+            "turnos_ate_pronta_esperado=7 é a estimativa do cenário 'nada extraído no turno principal' — "
+            "na prática pode fechar bem mais rápido se o Qwen já vier resolvendo campos sozinho, como "
+            "aconteceu na rodada de 07/09 (só não fechou daquela vez por faltar a resposta de "
+            "resultado_esperado, já corrigido)."
+        ),
     },
 ]
 
