@@ -1298,6 +1298,58 @@ def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> Ses
     return sessao
 
 
+def processar_confirmacao_tipo_demanda(sessao: SessionState, valor_selecionado: str) -> SessionState:
+    """
+    Aplica tipo_demanda confirmado via Radio direto ao estado (Bloco 07/08).
+    Bloco 24 — extraída de dentro de confirmar_tipo_demanda em interface/app.py
+    (que só fazia isso inline, misturado com atualização de tela) para o mesmo
+    motivo de processar_confirmacao_valor_negocio logo abaixo: sem uma função
+    própria em agent.py, o script de avaliação (scripts/rodar_casos.py e o
+    scripts/avaliar.py do Ato 3) não conseguia fechar até PRONTA nenhum caso
+    que dependesse desse campo, sem passar pela UI Gradio.
+
+    tipo_demanda é um enum "bare" em DemandState — não é wrapeado em
+    FieldProvenance (mesmo padrão de valor_negocio; ver achado de proveniência
+    incompleta em claude/ato3_kickoff.md).
+    """
+    demanda = sessao.demanda_ativa
+    if not demanda or not valor_selecionado:
+        return sessao
+
+    try:
+        demanda.tipo_demanda = TipoDemanda(valor_selecionado)
+    except ValueError:
+        return sessao
+
+    sessao.demandas[sessao.indice_ativo] = demanda
+    return sessao
+
+
+def processar_confirmacao_resultado_esperado(sessao: SessionState, valor_selecionado: str) -> SessionState:
+    """
+    Aplica resultado_esperado confirmado via Radio direto ao estado (opções
+    do Bloco 23, só pra tipo_demanda == Produto de Dados — Análise e
+    Alarmística são sempre inferidos por regra, nunca passam por aqui).
+    Bloco 24 — extraída de dentro de confirmar_resultado em interface/app.py,
+    mesmo motivo de processar_confirmacao_tipo_demanda acima.
+
+    origem=MANUAL porque, mesmo as opções sendo pré-definidas pelo sistema, o
+    valor que entra no briefing é sempre o que o usuário escolheu ativamente
+    no Radio — mesmo critério já usado em processar_confirmacao_pergunta_negocio.
+    """
+    demanda = sessao.demanda_ativa
+    if not demanda or not valor_selecionado:
+        return sessao
+
+    demanda.resultado_esperado = FieldProvenance(
+        valor=valor_selecionado,
+        origem=OrigemCampo.MANUAL,
+        turno=demanda.turno_atual,
+    )
+    sessao.demandas[sessao.indice_ativo] = demanda
+    return sessao
+
+
 def processar_confirmacao_valor_negocio(sessao: SessionState, valor_selecionado: str) -> SessionState:
     """
     Aplica valor_negocio confirmado via Radio direto ao estado — não passa
