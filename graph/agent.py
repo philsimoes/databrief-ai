@@ -836,34 +836,45 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
     # Inferência automática: Análise com objetivo preenchido → resultado_esperado
     # Regra: para Análise, o resultado entregue é sempre uma análise/relatório derivado do objetivo.
     # Não faz sentido perguntar os dois separadamente.
-    if (
-        demanda.tipo_demanda == TipoDemanda.ANALISE
-        and demanda.objetivo is not None
-        and demanda.resultado_esperado is None
-    ):
+    #
+    # Bloco 23 — fix: a condição não pode mais ser só "resultado_esperado is
+    # None". Bug real ao vivo (Cenário 5b, 07/09): o turno 1 mencionava
+    # "painel de monitoramento" — a checagem de palavra-chave explícita
+    # (PALAVRAS_FORMATO_EXPLICITO, mais abaixo) roda em TODO turno, sem saber
+    # ainda qual é o tipo_demanda, e já tinha fixado resultado_esperado =
+    # "Dashboard interativo" (origem TEXT) antes do Radio de tipo_demanda
+    # sequer aparecer. Quando o usuário depois escolheu "Alarmística" no
+    # Radio, a guarda antiga só preenchia se resultado_esperado ainda fosse
+    # None — como já não era, a Alarmística ficava presa com um resultado que
+    # não é alerta, exatamente a inconsistência que esse bloco deveria
+    # impedir. Agora a inferência é AUTORITATIVA pro tipo dela: corrige
+    # qualquer valor capturado antes do tipo ser conhecido, e só deixa em paz
+    # um valor que já bate com o que seria inferido (evita reescrever à toa
+    # um valor correto vindo de TEXT, que é uma origem mais informativa que
+    # RULE).
+    if demanda.tipo_demanda == TipoDemanda.ANALISE and demanda.objetivo is not None:
         valor_inferido = f"Análise: {demanda.objetivo.valor}"
-        demanda.resultado_esperado = FieldProvenance(
-            valor=valor_inferido,
-            origem=OrigemCampo.RULE,
-            turno=demanda.turno_atual,
-        )
+        if demanda.resultado_esperado is None or demanda.resultado_esperado.valor != valor_inferido:
+            demanda.resultado_esperado = FieldProvenance(
+                valor=valor_inferido,
+                origem=OrigemCampo.RULE,
+                turno=demanda.turno_atual,
+            )
 
     # Bloco 23 — Inferência automática: Alarmística → resultado_esperado
     # sempre "Alerta automático". Regra: por definição uma Alarmística É um
     # monitoramento com alertas (ver PERGUNTAS_FIXAS["tipo_demanda"]) — não
     # existe formato de entrega alternativo pra esse tipo, então perguntar é
-    # redundante. Mesmo padrão da inferência de Análise acima; diferente dela,
-    # não depende de nenhum outro campo (o valor é sempre o mesmo), então
-    # pode disparar assim que tipo_demanda vira Alarmística, mesmo no 1º turno.
-    if (
-        demanda.tipo_demanda == TipoDemanda.ALARMASTICA
-        and demanda.resultado_esperado is None
-    ):
-        demanda.resultado_esperado = FieldProvenance(
-            valor="Alerta automático",
-            origem=OrigemCampo.RULE,
-            turno=demanda.turno_atual,
-        )
+    # redundante. Mesmo padrão da inferência de Análise acima, incluindo o
+    # mesmo fix de autoridade (ver comentário acima) — sem ele, o mesmo bug
+    # do Cenário 5b se repete aqui.
+    if demanda.tipo_demanda == TipoDemanda.ALARMASTICA:
+        if demanda.resultado_esperado is None or demanda.resultado_esperado.valor != "Alerta automático":
+            demanda.resultado_esperado = FieldProvenance(
+                valor="Alerta automático",
+                origem=OrigemCampo.RULE,
+                turno=demanda.turno_atual,
+            )
 
     # Bloco 22 — geração automática de titulo (regra, sem pergunta dedicada).
     # titulo é sempre o ÚLTIMO campo na ordem de campos_vazios() — então, quando
