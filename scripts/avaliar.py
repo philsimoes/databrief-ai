@@ -16,16 +16,42 @@
 #   4. Perguntas desnecessárias (meta <=15%)
 #   5. Turnos até prontidão
 #   6. Completude do briefing (meta >=0,85)
-#   7. Concordância humana (meta >=80%) — PARCIAL aqui: este script só
-#      gera a metade 1 (o relatório com os campos de texto livre lado
-#      a lado). A leitura do arquivo de veredito e o cálculo do %
-#      fica pro Bloco 27 — ver "revisao_manual" no relatório final.
+#   7. Concordância humana (meta >=80%) — mecanismo de 2 passadas
+#      (Bloco 27, ver gerar_arquivo_veredito()/aplicar_veredito() mais
+#      abaixo): avaliar_todos() gera o relatório com "revisao_manual"
+#      (campos de texto livre lado a lado); gerar_arquivo_veredito()
+#      transforma isso num CSV pra você marcar concordo/discordo linha
+#      a linha; aplicar_veredito() lê o CSV preenchido, calcula o % e
+#      grava um relatório final com agregado["concordancia_humana"]
+#      já preenchido.
 #   8. Latência P50/P95 por etapa e por modo — reaproveita
 #      _resumo_latencias() de rodar_casos.py, sem reimplementar.
 #
 # NÃO calcula: taxa de recuperação de falhas (meta 100%) — pertence ao
 # item 4 do Ato 3 (casos de falha, Bloco 29), que ainda não existe.
 # O relatório final deixa essa chave como None, com uma nota.
+#
+# Bloco 27 — fluxo completo de concordância humana, depois de rodar
+# avaliar_todos() (Célula nova, depois da Célula 3):
+#
+#     from scripts.avaliar import gerar_arquivo_veredito, aplicar_veredito
+#
+#     # 1) gera o CSV pra você preencher (uma linha por campo de texto
+#     #    livre de cada caso — titulo/objetivo/bloqueios/link_evidencia,
+#     #    + resultado_esperado só nos casos de Análise)
+#     caminho_veredito = gerar_arquivo_veredito("resultados/avaliacoes/<arquivo>_relatorio.json")
+#
+#     # 2) baixe o CSV do Colab (painel de Arquivos à esquerda > "..." >
+#     #    Baixar), abra no Google Sheets/Excel, preencha a coluna
+#     #    "veredito" de cada linha com "concordo" ou "discordo" (a
+#     #    coluna "comentario" é livre, opcional), suba de volta pro
+#     #    Colab no mesmo caminho (sobrescrevendo)
+#
+#     # 3) lê o CSV preenchido e calcula o % de concordância
+#     relatorio_final = aplicar_veredito(
+#         "resultados/avaliacoes/<arquivo>_relatorio.json",
+#         caminho_veredito,
+#     )
 #
 # Bloco 25 é pré-requisito: todos os 10 casos de testes/casos_teste.py
 # precisam ter respostas_por_campo completo e gabarito_final — sem
@@ -47,6 +73,7 @@
 # divergir com o tempo.
 # ============================================================
 
+import csv
 import json
 import os
 import time
@@ -552,6 +579,163 @@ def avaliar_todos(casos: list = None, salvar_json: bool = True) -> dict:
         "resumo_latencias": resumo_latencias,
         "casos": relatorios,
     }
+
+
+# ────────────────────────────────────────────────────────────
+# Bloco 27 — mecanismo de veredito humano (concordância humana, meta >=80%)
+#
+# Duas funções, 2 passadas — ver exemplo de uso completo no cabeçalho
+# do módulo. CSV escolhido em vez de JSON pro arquivo de veredito
+# porque é bem mais rápido de preencher numa planilha (Google Sheets/
+# Excel) do que editando texto/aspas/vírgulas à mão num JSON — só uma
+# palavra por linha ("concordo" ou "discordo"), sem risco de quebrar a
+# sintaxe do arquivo.
+# ────────────────────────────────────────────────────────────
+
+_VEREDITOS_VALIDOS = {"concordo", "discordo"}
+_COLUNAS_VEREDITO = ["chave", "caso_id", "campo", "gabarito", "obtido", "veredito", "comentario"]
+
+
+def gerar_arquivo_veredito(caminho_relatorio: str, caminho_saida: str = None) -> str:
+    """1ª passada do Bloco 27. Lê um relatório já salvo por avaliar_todos()
+    e monta um CSV com uma linha por item de 'revisao_manual' de cada caso
+    (titulo/objetivo/bloqueios/link_evidencia sempre, resultado_esperado só
+    nos casos de Análise — ver avaliar_caso()), pronto pra você preencher a
+    coluna 'veredito' com 'concordo' ou 'discordo'.
+
+    Se caminho_saida já existir (por exemplo, você rodou isso antes numa
+    rodada anterior do relatório), os vereditos e comentários já
+    preenchidos são PRESERVADOS — só entram linhas novas pra itens que
+    ainda não tinham sido julgados. Rodar de novo depois de preencher tudo
+    não apaga nada.
+
+    Retorna o caminho do CSV gerado (mesmo nome do relatório, trocando
+    "_relatorio.json" por "_veredito.csv", se caminho_saida não for
+    informado)."""
+    with open(caminho_relatorio, encoding="utf-8") as f:
+        relatorio = json.load(f)
+
+    if caminho_saida is None:
+        if caminho_relatorio.endswith("_relatorio.json"):
+            caminho_saida = caminho_relatorio[: -len("_relatorio.json")] + "_veredito.csv"
+        else:
+            caminho_saida = caminho_relatorio + ".veredito.csv"
+
+    vereditos_existentes = {}
+    if os.path.exists(caminho_saida):
+        with open(caminho_saida, encoding="utf-8", newline="") as f:
+            for linha in csv.DictReader(f):
+                vereditos_existentes[linha["chave"]] = (
+                    linha.get("veredito", ""), linha.get("comentario", ""),
+                )
+
+    linhas = []
+    for caso in relatorio.get("casos", []):
+        for item in caso.get("revisao_manual", []):
+            veredito_previo, comentario_previo = vereditos_existentes.get(item["chave"], ("", ""))
+            linhas.append({
+                "chave": item["chave"],
+                "caso_id": caso["id"],
+                "campo": item["campo"],
+                "gabarito": item["gabarito"],
+                "obtido": item["obtido"],
+                "veredito": veredito_previo,
+                "comentario": comentario_previo,
+            })
+
+    with open(caminho_saida, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_COLUNAS_VEREDITO)
+        writer.writeheader()
+        writer.writerows(linhas)
+
+    n_pendentes = sum(
+        1 for l in linhas if l["veredito"].strip().lower() not in _VEREDITOS_VALIDOS
+    )
+    print(f"📝 arquivo de veredito gerado/atualizado em {caminho_saida}")
+    print(f"   {len(linhas)} item(ns) no total, {n_pendentes} pendente(s) de julgamento.")
+    print("   Preencha a coluna 'veredito' de cada linha com 'concordo' ou 'discordo' "
+          "('comentario' é livre, opcional) e rode aplicar_veredito() depois.")
+    return caminho_saida
+
+
+def aplicar_veredito(caminho_relatorio: str, caminho_veredito: str, salvar_json: bool = True) -> dict:
+    """2ª passada do Bloco 27. Lê o CSV de veredito já preenchido, calcula
+    a concordância humana (concordo / total JULGADO — itens sem veredito
+    válido preenchido ficam de fora da conta, listados como pendentes ou
+    inválidos em vez de contar como discordância), atualiza
+    agregado['concordancia_humana'] e grava um relatório final (arquivo
+    novo, nunca sobrescreve o relatório original de avaliar_todos()).
+
+    Uma linha com 'veredito' vazio conta como pendente (ainda não julgada).
+    Uma linha com qualquer outro texto que não seja exatamente 'concordo'
+    ou 'discordo' (fora de maiúsculas/espaços) conta como inválida — os
+    dois casos ficam de fora do cálculo e são listados no relatório pra
+    você corrigir, em vez de distorcer o percentual silenciosamente."""
+    with open(caminho_relatorio, encoding="utf-8") as f:
+        relatorio = json.load(f)
+
+    vereditos = {}
+    with open(caminho_veredito, encoding="utf-8", newline="") as f:
+        for linha in csv.DictReader(f):
+            vereditos[linha["chave"]] = linha.get("veredito", "")
+
+    concordo = 0
+    discordo = 0
+    pendentes = []
+    invalidos = []
+    total_itens = 0
+
+    for caso in relatorio.get("casos", []):
+        for item in caso.get("revisao_manual", []):
+            chave = item["chave"]
+            total_itens += 1
+            valor_bruto = vereditos.get(chave, "")
+            valor = valor_bruto.strip().lower()
+            if valor == "concordo":
+                concordo += 1
+            elif valor == "discordo":
+                discordo += 1
+            elif valor == "":
+                pendentes.append(chave)
+            else:
+                invalidos.append({"chave": chave, "valor": valor_bruto})
+
+    total_julgado = concordo + discordo
+    pct_concordancia = (concordo / total_julgado) if total_julgado else None
+
+    relatorio["agregado"]["concordancia_humana"] = (
+        round(pct_concordancia, 3) if pct_concordancia is not None else None
+    )
+    relatorio["veredito"] = {
+        "arquivo": caminho_veredito,
+        "concordo": concordo,
+        "discordo": discordo,
+        "total_julgado": total_julgado,
+        "total_itens": total_itens,
+        "pendentes": pendentes,
+        "invalidos": invalidos,
+    }
+
+    meta = relatorio["agregado"].get("meta_concordancia_humana", 0.80)
+    print(f"Concordância humana: {relatorio['agregado']['concordancia_humana']} (meta >= {meta}) "
+          f"— {concordo} concordo / {discordo} discordo / {len(pendentes)} pendente(s) de {total_itens}")
+    if invalidos:
+        print(f"⚠️  {len(invalidos)} linha(s) com 'veredito' não reconhecido (esperado "
+              f"'concordo' ou 'discordo'), fora da conta: {invalidos}")
+    if pendentes:
+        print(f"⚠️  {len(pendentes)} item(ns) ainda sem veredito, fora da conta: {pendentes}")
+
+    if salvar_json:
+        if caminho_relatorio.endswith("_relatorio.json"):
+            caminho_final = caminho_relatorio[: -len("_relatorio.json")] + "_final.json"
+        else:
+            caminho_final = caminho_relatorio + ".final.json"
+        with open(caminho_final, "w", encoding="utf-8") as f:
+            json.dump(relatorio, f, ensure_ascii=False, indent=2, default=str)
+        print(f"\n💾 relatório final salvo em {caminho_final} — commite esse arquivo junto "
+              f"com o CSV de veredito.")
+
+    return relatorio
 
 
 if __name__ == "__main__":
