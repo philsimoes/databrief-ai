@@ -122,13 +122,22 @@ CASOS = [
     },
 
     # ────────────────────────────────────────────────────────────
-    # 3. Estruturante com bloqueio e link de evidência mencionados
-    #    no mesmo turno — testa extração de campos opcionais.
+    # 3. Produto de Dados (pipeline/tabela Gold como base de um dashboard)
+    #    com bloqueio e link de evidência mencionados no mesmo turno —
+    #    testa extração de campos opcionais.
+    #
+    #    Bloco 23 (06/09): esse caso testava a categoria "Estruturante",
+    #    removida do TipoDemanda (decisão do Phil, como gerente de dados —
+    #    pipeline/tabela Gold sempre serviam de base pra um produto/alerta
+    #    final, nunca eram pedido de negócio isolado). Texto do turno não
+    #    mudou — continua citando tanto "estruturar a camada Gold" quanto
+    #    "dashboards de Estácio & Wyden" — só a expectativa de tipo_demanda
+    #    mudou, porque as duas coisas agora caem na mesma categoria.
     # ────────────────────────────────────────────────────────────
     {
         "id": "C003",
         "categoria": "bloqueio_e_link_mencionados",
-        "descricao": "Demanda Estruturante já cita um bloqueio (dependência de outra área) e um link de evidência",
+        "descricao": "Demanda Produto de Dados (pipeline/tabela Gold citados como base de um dashboard) já cita um bloqueio (dependência de outra área) e um link de evidência",
         "turnos": [
             {
                 "tipo": "text",
@@ -141,13 +150,13 @@ CASOS = [
             },
         ],
         "campos_esperados_apos_turnos": {
-            "tipo_demanda": "Estruturante",
+            "tipo_demanda": "Produto de Dados",
             "bloqueios": "depende da liberação de acesso da equipe de Engenharia",
             "link_evidencia": "https://chamados.yduqs.com.br/TICKET-4521",
         },
         "readiness_esperado_apos_turnos": "discovery",
         "turnos_ate_pronta_esperado": None,
-        "observacoes": "bloqueios e link_evidencia são opcionais no schema — este caso confirma que, quando mencionados, entram com origem TEXT e não ficam de fora do briefing.",
+        "observacoes": "bloqueios e link_evidencia são opcionais no schema — este caso confirma que, quando mencionados, entram com origem TEXT e não ficam de fora do briefing. Nota (Bloco 23): expectativa de tipo_demanda mudou de 'Estruturante' pra 'Produto de Dados' — ver comentário do bloco acima.",
     },
 
     # ────────────────────────────────────────────────────────────
@@ -242,7 +251,8 @@ CASOS = [
         "respostas_por_campo": {
             "objetivo": "O objetivo é entender por que os alunos da pós-graduação do Ibmec não estão renovando a matrícula.",
             # "relatório automatizado" (turno principal) não está na lista de gatilhos que o
-            # PROMPT_EXTRAIR dá ao Qwen pra resultado_esperado (dashboard/agente/tabela/pipeline)
+            # PROMPT_EXTRAIR dá ao Qwen pra resultado_esperado (dashboard/agente/tabela Gold,
+            # ver Bloco 23 — "pipeline" saiu junto com a remoção de Estruturante)
             # — testado com mock em 30/08: o campo NÃO veio preenchido automaticamente do turno
             # principal, caiu mesmo na pergunta fixa. Resposta abaixo usa "agente automatizado",
             # que É um gatilho explícito dos dois lados (PROMPT_EXTRAIR e PALAVRAS_FORMATO_EXPLICITO).
