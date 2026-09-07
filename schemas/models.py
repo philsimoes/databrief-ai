@@ -19,9 +19,18 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # ────────────────────────────────────────────────────────────
 
 class TipoDemanda(str, Enum):
-    """Tipo técnico da entrega."""
+    """Tipo técnico da entrega.
+
+    Bloco 23 — "Estruturante" foi removida (06/09, decisão do Phil como
+    gerente de dados): na prática, pipeline/tabela Gold/engenharia de dados
+    sempre serviam de base para um Produto de Dados ou uma Alarmística — não
+    existia demanda de negócio pedindo só isso, sem um consumível final.
+    Passam a entrar direto em PRODUTO_DADOS. A distinção "isso é trabalho
+    estruturante" continua existindo, mas como tag em classificacao_estrategica
+    (ClassificacaoEstrategica.ESTRUTURANTE, abaixo — campo diferente, não afetado
+    por essa mudança), não como tipo_demanda separado.
+    """
     ANALISE        = "Análise"
-    ESTRUTURANTE   = "Estruturante"
     PRODUTO_DADOS  = "Produto de Dados"
     ALARMASTICA    = "Alarmística"
 
@@ -101,14 +110,18 @@ class CamadaRAG(str, Enum):
 
 # ────────────────────────────────────────────────────────────
 # DEPENDÊNCIAS ENTRE TIPOS DE DEMANDA
-# Produto de Dados e Alarmística sempre dependem de Estruturante.
-# Análise depende de Estruturante apenas se usar Gold como fonte.
-# A dependência condicional da Análise é resolvida no grafo,
-# não aqui — aqui só definimos a ordem padrão.
+# Legado do Ato 1/2, já DESATIVADO desde então (fluxo multi-demanda nunca foi
+# ligado — ver comentário em no_avaliar_completude, graph/agent.py). Bloco 23
+# removeu o tipo "Estruturante" (ver TipoDemanda acima), então a ordenação
+# abaixo perdeu o motivo original de existir (não há mais um tipo que precisa
+# "rodar antes" dos outros) — mantida só porque ordenar_demandas() ainda é
+# chamada por SessionState.adicionar_demanda(); DEPENDE_SEMPRE_DE_ESTRUTURANTE
+# e analise_depende_de_gold() ficam sem uso prático hoje, não removidos agora
+# pra não mexer no fluxo multi-demanda antes da hora (fora do escopo do
+# Bloco 23). Reavaliar quando o Ato 2 retomar multi-demanda de verdade.
 # ────────────────────────────────────────────────────────────
 
 ORDEM_RESOLUCAO: Dict[TipoDemanda, int] = {
-    TipoDemanda.ESTRUTURANTE:  0,
     TipoDemanda.ANALISE:       1,
     TipoDemanda.PRODUTO_DADOS: 2,
     TipoDemanda.ALARMASTICA:   2,
@@ -347,8 +360,9 @@ class DemandState(BaseModel):
 class SessionState(BaseModel):
     """
     Estado de uma sessão completa.
-    Pode conter múltiplas demandas ordenadas por dependência técnica.
-    Ex: Gold (Estruturante) → Agente (Produto de Dados).
+    Pode conter múltiplas demandas ordenadas por dependência técnica
+    (mecanismo legado, desativado desde o Ato 1/2 — ver nota em
+    ORDEM_RESOLUCAO acima).
     """
     sessao_id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
     modo_execucao: ModoExecucao = ModoExecucao.GPU_LOCAL
@@ -372,8 +386,9 @@ class SessionState(BaseModel):
 
     def adicionar_demanda(self, demanda: DemandState) -> None:
         """
-        Adiciona uma demanda e reordena pela cadeia de dependência.
-        Estruturante sempre fica antes de Produto de Dados e Alarmística.
+        Adiciona uma demanda e reordena pela cadeia de dependência
+        (mecanismo legado, desativado desde o Ato 1/2 — ver nota em
+        ORDEM_RESOLUCAO acima).
         """
         self.demandas.append(demanda)
         self.demandas = ordenar_demandas(self.demandas)
