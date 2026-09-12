@@ -16,7 +16,7 @@ from graph.agent import (
     processar_turno, processar_selecao_checkbox,
     processar_confirmacao_pergunta_negocio, processar_confirmacao_valor_negocio,
     processar_confirmacao_tipo_demanda, processar_confirmacao_resultado_esperado,
-    obter_modo_ativo,
+    obter_modo_ativo, obter_uso_openai,
 )
 from audio.transcricao import transcrever_audio
 from audio.sintese import sintetizar_texto
@@ -606,7 +606,10 @@ def aprovar_briefing(sessao_state):
     sessao  = SessionState.model_validate(sessao_state)
     demanda = sessao.demanda_ativa
     from schemas.models import BriefingOutput
-    briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao)
+    # uso_openai só faz sentido no modo OPENAI — pedido do Phil (12/09) pra
+    # deixar isso visível no próprio JSON baixado, não só no print do console.
+    uso_openai = obter_uso_openai() if sessao.modo_execucao == ModoExecucao.OPENAI else None
+    briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao, uso_openai=uso_openai)
     dados = briefing.to_sharepoint_dict()
     dados["_metadata"] = {
         "id_demanda":    briefing.id_demanda,
@@ -614,6 +617,7 @@ def aprovar_briefing(sessao_state):
         "completude":    briefing.completude,
         "gerado_em":     briefing.gerado_em.isoformat(),
         "modo_execucao": briefing.modo_execucao.value,
+        "uso_openai":    briefing.uso_openai,
         "proveniencia":  {
             k: {"origem": v.origem.value, "turno": v.turno, "arquivo": v.arquivo}
             for k, v in briefing.proveniencia.items()
