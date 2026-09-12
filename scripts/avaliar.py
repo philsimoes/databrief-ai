@@ -80,7 +80,7 @@ import time
 from datetime import datetime
 
 from schemas.models import (
-    SessionState, DemandState, TipoInput, ReadinessStatus, OrigemCampo,
+    SessionState, DemandState, TipoInput, ReadinessStatus, OrigemCampo, ModoExecucao,
 )
 from graph.agent import (
     construir_grafo,
@@ -91,6 +91,7 @@ from graph.agent import (
     processar_confirmacao_resultado_esperado,
     processar_selecao_checkbox,
     obter_modo_ativo,
+    obter_uso_openai,
 )
 
 from testes.casos_teste import CASOS
@@ -556,6 +557,16 @@ def avaliar_todos(casos: list = None, salvar_json: bool = True) -> dict:
     total_revisao = sum(len(r.get("revisao_manual", [])) for r in relatorios if not r.get("erro"))
     print(f"  {total_revisao} item(ns) — ver 'revisao_manual' em cada caso do relatório salvo.")
 
+    # uso_openai só é preenchido no modo OPENAI, e é CUMULATIVO pra sessão
+    # inteira do Colab (não zera entre rodadas de avaliar_todos()) — ver
+    # docstring de graph.agent.obter_uso_openai(). Pedido do Phil (12/09)
+    # pra deixar registrado no relatório salvo, não só no print do console.
+    uso_openai = obter_uso_openai() if modo == ModoExecucao.OPENAI else None
+    if uso_openai:
+        print(f"\nUso da API OpenAI acumulado nesta sessão do Colab: "
+              f"{uso_openai['chamadas_realizadas']}/{uso_openai['limite_chamadas']} chamadas, "
+              f"{uso_openai['tokens_total']} tokens.")
+
     if salvar_json:
         os.makedirs(_DIR_RESULTADOS, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -564,6 +575,7 @@ def avaliar_todos(casos: list = None, salvar_json: bool = True) -> dict:
             "modo": modo.value,
             "timestamp": timestamp,
             "duracao_lote_s": round(duracao_lote, 2),
+            "uso_openai_acumulado_sessao": uso_openai,
             "agregado": agregado,
             "resumo_latencias": resumo_latencias,
             "casos": relatorios,
@@ -575,6 +587,7 @@ def avaliar_todos(casos: list = None, salvar_json: bool = True) -> dict:
 
     return {
         "modo": modo.value,
+        "uso_openai_acumulado_sessao": uso_openai,
         "agregado": agregado,
         "resumo_latencias": resumo_latencias,
         "casos": relatorios,
