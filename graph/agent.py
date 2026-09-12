@@ -46,10 +46,24 @@ _ROTULOS_MODO = {
 # chamada). Rede de segurança contra loop/bug fazendo a aplicação chamar a
 # API sem perceber — não é sobre o custo esperado (gpt-4o-mini é barato),
 # é sobre nunca estourar uma chave institucional por um bug silencioso.
-# Ajuste esse número antes de rodar um teste ao vivo: baixo (~5) pra um
-# smoke test, mais alto pro experimento comparativo completo.
+# Ajuste esse número conforme a fase: baixo (~5) pra um smoke test manual
+# (era o valor anterior); mais alto pra rodar a suíte de avaliação de
+# verdade (scripts/avaliar.py e/ou scripts/rodar_casos.py) contra os 10
+# casos de testes/casos_teste.py.
+#
+# 200 (valor atual, 12/09) foi calculado assim: cada caso fechado costuma
+# gastar de 5 a ~8 chamadas (extração do turno principal, pergunta de
+# classificacao_estrategica — não tem pergunta fixa —, sugestão de
+# perguntas_de_negocio, geração automática de título, resumo do briefing;
+# +2 se objetivo precisar de uma pergunta própria). Pra 10 casos isso dá
+# uns 50-80 por rodada — 200 cobre rodar TANTO avaliar_todos() QUANTO
+# rodar_todos() na MESMA sessão do Colab (o contador é cumulativo pra
+# sessão inteira, não zera entre as duas chamadas) com folga, sem virar
+# um limite "infinito" de verdade. Ainda uma fração de centavo de custo
+# real (ver conversa de 12/09) — o número existe pra pegar bug/loop, não
+# pra economizar.
 # ────────────────────────────────────────────────────────────
-LIMITE_CHAMADAS_OPENAI = 5
+LIMITE_CHAMADAS_OPENAI = 200
 
 _contador_chamadas_openai = 0
 _total_tokens_openai = 0
