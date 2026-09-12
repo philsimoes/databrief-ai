@@ -41,6 +41,19 @@ _ROTULOS_MODO = {
     ModoExecucao.OPENAI:    "OpenAI (gpt-4o-mini)",
 }
 
+# ────────────────────────────────────────────────────────────
+# LIMITE DE CHAMADAS — só relevante em modo OPENAI (custo real por
+# chamada). Rede de segurança contra loop/bug fazendo a aplicação chamar a
+# API sem perceber — não é sobre o custo esperado (gpt-4o-mini é barato),
+# é sobre nunca estourar uma chave institucional por um bug silencioso.
+# Ajuste esse número antes de rodar um teste ao vivo: baixo (~5) pra um
+# smoke test, mais alto pro experimento comparativo completo.
+# ────────────────────────────────────────────────────────────
+LIMITE_CHAMADAS_OPENAI = 5
+
+_contador_chamadas_openai = 0
+_total_tokens_openai = 0
+
 
 def inicializar_modelo(model, tokenizer, modo: ModoExecucao):
     """
@@ -152,7 +165,26 @@ def chamar_openai(prompt: str, max_tokens: int = 512) -> tuple:
     Nunca cai silenciosamente para o Qwen se a chave não estiver configurada
     — levanta erro claro para o usuário corrigir a configuração, em vez de
     trocar de modelo por trás sem avisar (requisito do projeto: "nunca
-    fallback silencioso")."""
+    fallback silencioso").
+
+    Limite de chamadas por sessão (LIMITE_CHAMADAS_OPENAI) segue o mesmo
+    princípio: ao estourar o limite, levanta erro claro em vez de deixar a
+    sessão continuar chamando a API sem controle — rede de segurança contra
+    bug/loop, não contra o custo esperado de cada chamada. Cada chamada bem
+    sucedida também loga no console quantos tokens consumiu (nesta chamada e
+    acumulado na sessão) — visibilidade mínima de uso já que, sendo uma chave
+    institucional, não há painel de billing acessível para conferir depois."""
+    global _contador_chamadas_openai, _total_tokens_openai
+
+    if _contador_chamadas_openai >= LIMITE_CHAMADAS_OPENAI:
+        raise RuntimeError(
+            f"Limite de {LIMITE_CHAMADAS_OPENAI} chamadas à API da OpenAI "
+            f"nesta sessão foi atingido ({_contador_chamadas_openai} "
+            "chamadas feitas). Isso é uma trava de segurança, não um erro — "
+            "aumente LIMITE_CHAMADAS_OPENAI em graph/agent.py se quiser "
+            "continuar, e reinicie a sessão."
+        )
+
     chave = os.environ.get("OPENAI_API_KEY")
     if not chave:
         raise RuntimeError(
@@ -174,6 +206,15 @@ def chamar_openai(prompt: str, max_tokens: int = 512) -> tuple:
         temperature=0.1,
     )
     latencia = time.time() - t0
+
+    _contador_chamadas_openai += 1
+    tokens_desta_chamada = resposta.usage.total_tokens if resposta.usage else 0
+    _total_tokens_openai += tokens_desta_chamada
+    print(
+        f"🔵 OpenAI: chamada {_contador_chamadas_openai}/{LIMITE_CHAMADAS_OPENAI} — "
+        f"{tokens_desta_chamada} tokens nesta chamada, "
+        f"{_total_tokens_openai} acumulado na sessão"
+    )
 
     texto = (resposta.choices[0].message.content or "").strip()
     return texto, latencia
