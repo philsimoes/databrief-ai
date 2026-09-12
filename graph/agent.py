@@ -234,6 +234,30 @@ def chamar_llm(prompt: str, max_tokens: int = 512) -> tuple:
     return chamar_qwen(prompt, max_tokens=max_tokens)
 
 
+def obter_uso_openai() -> dict:
+    """Retorna o uso ACUMULADO da API da OpenAI NESTA SESSÃO do Colab (desde
+    que o kernel foi iniciado ou reiniciado) — quantas chamadas já foram
+    feitas (contra o limite configurado em LIMITE_CHAMADAS_OPENAI) e o total
+    de tokens consumido até agora. É cumulativo pra sessão inteira, não por
+    briefing/rodada individual: se você gerar dois briefings ou rodar
+    avaliar_todos() duas vezes na mesma sessão, o segundo número já inclui o
+    primeiro. Só faz sentido quando o modo ativo é OPENAI — nos modos locais
+    (GPU_LOCAL/CPU_LOCAL) não existe chamada de API nenhuma pra contar, e os
+    contadores ficam parados em zero.
+
+    Usado por no_gerar_briefing() (pra deixar isso registrado no próprio
+    JSON do briefing, tanto o exibido na tela quanto o baixado) e pelos
+    scripts de teste/avaliação (scripts/rodar_casos.py, scripts/avaliar.py),
+    pra registrar o custo de qualquer rodada comparativa que use o modo
+    OPENAI — sem isso, o único jeito de saber quanto uma rodada gastou era
+    olhar o print no console, que se perde ao fechar a aba."""
+    return {
+        "chamadas_realizadas": _contador_chamadas_openai,
+        "limite_chamadas": LIMITE_CHAMADAS_OPENAI,
+        "tokens_total": _total_tokens_openai,
+    }
+
+
 # ────────────────────────────────────────────────────────────
 # ESTADO DO GRAFO
 # ────────────────────────────────────────────────────────────
@@ -1189,7 +1213,10 @@ def no_gerar_briefing(state: GraphState) -> GraphState:
     # usuário já vê e implicitamente revisa esse texto antes de aprovar, e
     # ele é reaproveitado depois pelo TTS (Piper) sem precisar gerar de novo.
     demanda.resumo_executivo = _extrair_resumo_curto(resumo)
-    briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao)
+    # uso_openai só é preenchido no modo OPENAI — nos modos locais não há
+    # chamada de API nenhuma pra contar (ver obter_uso_openai() acima).
+    uso_openai = obter_uso_openai() if obter_modo_ativo() == ModoExecucao.OPENAI else None
+    briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao, uso_openai=uso_openai)
 
     sessao.demandas[sessao.indice_ativo] = demanda
     state["sessao"] = sessao
