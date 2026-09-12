@@ -447,14 +447,30 @@ class BriefingOutput(BaseModel):
     gerado_em:    datetime = Field(default_factory=datetime.now)
     modo_execucao: ModoExecucao = ModoExecucao.GPU_LOCAL
 
+    # Uso acumulado da API da OpenAI NESTA SESSÃO do Colab (chamadas feitas,
+    # limite configurado, tokens totais) — só preenchido quando modo_execucao
+    # == OPENAI; None nos modos locais, onde não existe chamada de API pra
+    # contar. Vem de graph.agent.obter_uso_openai(); pedido do Phil (12/09)
+    # depois de confirmar ao vivo que o contador só aparecia no console —
+    # rede de segurança/transparência de custo, já que é uma chave
+    # institucional sem painel de billing próprio.
+    uso_openai: Optional[Dict[str, Any]] = None
+
     # Proveniência completa de cada campo (para o painel)
     proveniencia: Dict[str, FieldProvenance] = Field(default_factory=dict)
 
     @classmethod
-    def from_demand_state(cls, state: DemandState, modo: ModoExecucao) -> "BriefingOutput":
+    def from_demand_state(
+        cls, state: DemandState, modo: ModoExecucao,
+        uso_openai: Optional[Dict[str, Any]] = None,
+    ) -> "BriefingOutput":
         """
         Constrói o BriefingOutput a partir do DemandState aprovado.
         Chamado apenas após aprovação explícita do usuário.
+
+        `uso_openai` é opcional e só deveria vir preenchido (dict, ver
+        graph.agent.obter_uso_openai()) quando o modo ativo é OPENAI — quem
+        chama decide isso, aqui só é repassado ao model_dump final.
         """
         def valor(fp: Optional[FieldProvenance]) -> Any:
             return fp.valor if fp else None
@@ -483,6 +499,7 @@ class BriefingOutput(BaseModel):
             completude=state.calcular_completude(),
             pendencias=state.pendencias,
             modo_execucao=modo,
+            uso_openai=uso_openai,
             proveniencia=prov,
         )
 
