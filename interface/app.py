@@ -677,11 +677,35 @@ def transcrever_audio_ui(caminho_audio):
     """Chamada quando o usuário termina de gravar ou envia um arquivo de áudio.
     Transcreve (carrega Whisper, transcreve, libera a GPU) e mostra o texto
     num campo editável para revisão antes de entrar no chat.
+
+    Dois jeitos de dar errado que precisam de tratamento explícito (nunca
+    fallback silencioso): (1) a transcrição em si falha — áudio corrompido,
+    formato não suportado pelo librosa, etc. — e levantaria uma exceção não
+    tratada até aqui; (2) a transcrição "funciona" mas devolve string vazia
+    — áudio silencioso, ruído puro, ou gravação cortada — e sem esse check
+    o usuário veria o campo de revisão abrir vazio sem entender por quê.
     """
     if not caminho_audio:
-        return gr.update(visible=False), ""
-    resultado = transcrever_audio(caminho_audio)
-    return gr.update(visible=True), resultado["texto"]
+        return gr.update(visible=False), "", ""
+
+    try:
+        resultado = transcrever_audio(caminho_audio)
+    except Exception as e:
+        return (
+            gr.update(visible=False), "",
+            f"Não foi possível transcrever o áudio: {e}",
+        )
+
+    texto = resultado["texto"]
+    if not texto:
+        return (
+            gr.update(visible=False), "",
+            "A transcrição voltou vazia — o áudio pode estar sem fala "
+            "(silêncio/ruído) ou num formato que o Whisper não conseguiu "
+            "processar. Tente gravar de novo ou enviar outro arquivo.",
+        )
+
+    return gr.update(visible=True), texto, ""
 
 
 def enviar_transcricao(texto_transcrito, historico):
@@ -704,17 +728,30 @@ def extrair_anexo_ui(caminho_arquivo):
     Extrai o texto e mostra num campo editável para revisão antes de entrar
     no chat — útil porque a extração pode trazer ruído de formatação (quebras
     de linha, cabeçalhos repetidos) que vale a pena limpar antes de enviar.
+
+    extrair_texto_anexo() não trata internamente um arquivo corrompido ou
+    ilegível (ex.: PDF com extensão certa mas conteúdo inválido/protegido) —
+    pdfplumber/python-docx levantam a exceção crua. Sem o try/except aqui,
+    isso quebra o callback do Gradio sem explicação nenhuma pro usuário.
     """
     if not caminho_arquivo:
-        return gr.update(visible=False), "", ""
-    resultado = extrair_texto_anexo(caminho_arquivo)
+        return gr.update(visible=False), "", "", ""
+
+    try:
+        resultado = extrair_texto_anexo(caminho_arquivo)
+    except Exception as e:
+        return (
+            gr.update(visible=False), "", "",
+            f"Não foi possível ler o anexo: {e}",
+        )
+
     texto = resultado["texto"]
     if resultado["truncado"]:
         texto += (
             "\n\n[...texto truncado — o documento é muito longo; revise e "
             "edite antes de enviar se precisar de outro trecho...]"
         )
-    return gr.update(visible=True), texto, resultado["arquivo"]
+    return gr.update(visible=True), texto, resultado["arquivo"], ""
 
 
 def enviar_anexo(texto_anexo, historico, nome_arquivo):
@@ -916,6 +953,12 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                         "Descartar", size="sm", variant="secondary"
                     )
 
+            # Status compartilhado de erro para transcrição/extração de anexo.
+            # Mesmo padrão já usado em status_tts: nunca deixa a exceção subir
+            # e quebrar o callback do Gradio (fallback silencioso é proibido
+            # pelo projeto) — em vez disso, mostra uma mensagem amigável aqui.
+            status_entrada = gr.Markdown("")
+
         # ── Briefing final ────────────────────────────────────
         with gr.Column(elem_classes=["chat-container"], visible=False) as secao_briefing:
             briefing_html = gr.HTML(value="")
@@ -961,7 +1004,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         audio_input.change(
             fn=transcrever_audio_ui,
             inputs=[audio_input],
-            outputs=[secao_transcricao, editor_transcricao],
+            outputs=[secao_transcricao, editor_transcricao, status_entrada],
         )
 
         btn_confirmar_transcricao.click(
@@ -989,14 +1032,14 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         )
 
         btn_descartar_transcricao.click(
-            fn=lambda: ("", gr.update(visible=False), None),
-            outputs=[editor_transcricao, secao_transcricao, audio_input],
+            fn=lambda: ("", gr.update(visible=False), None, ""),
+            outputs=[editor_transcricao, secao_transcricao, audio_input, status_entrada],
         )
 
         anexo_input.change(
             fn=extrair_anexo_ui,
             inputs=[anexo_input],
-            outputs=[secao_anexo, editor_anexo, nome_arquivo_state],
+            outputs=[secao_anexo, editor_anexo, nome_arquivo_state, status_entrada],
         )
 
         btn_confirmar_anexo.click(
@@ -1024,8 +1067,8 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         )
 
         btn_descartar_anexo.click(
-            fn=lambda: ("", gr.update(visible=False), None, ""),
-            outputs=[editor_anexo, secao_anexo, anexo_input, nome_arquivo_state],
+            fn=lambda: ("", gr.update(visible=False), None, "", ""),
+            outputs=[editor_anexo, secao_anexo, anexo_input, nome_arquivo_state, status_entrada],
         )
 
         btn_confirmar_tipo.click(
