@@ -688,7 +688,14 @@ def aplicar_veredito(caminho_relatorio: str, caminho_veredito: str, salvar_json:
         relatorio = json.load(f)
 
     vereditos = {}
-    with open(caminho_veredito, encoding="utf-8", newline="") as f:
+    # utf-8-sig em vez de utf-8: tolera o BOM (marca invisível de 3 bytes no
+    # início do arquivo) que Excel/Sheets — e exportações como a do artefato
+    # de revisão humana — costumam gravar em CSVs "UTF-8". Com "utf-8" puro,
+    # esse BOM gruda no nome da primeira coluna (vira "﻿chave" em vez de
+    # "chave"), e csv.DictReader nunca encontra a chave certa -> KeyError.
+    # utf-8-sig remove o BOM quando ele existe e não muda nada quando não
+    # existe, então é seguro nos dois casos.
+    with open(caminho_veredito, encoding="utf-8-sig", newline="") as f:
         for linha in csv.DictReader(f):
             vereditos[linha["chave"]] = linha.get("veredito", "")
 
