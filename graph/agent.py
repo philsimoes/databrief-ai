@@ -16,7 +16,7 @@ from schemas.models import (
     DemandState, SessionState, TurnInput, FieldProvenance,
     TipoDemanda, OrigemCampo, TipoInput, ReadinessStatus,
     ModoExecucao, BriefingOutput, ValorNegocio, ClassificacaoEstrategica,
-    DEPENDE_SEMPRE_DE_ESTRUTURANTE, analise_depende_de_gold, ordenar_demandas
+    ordenar_demandas,
 )
 
 # ────────────────────────────────────────────────────────────
@@ -783,6 +783,10 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
         if len(categorias_no_texto) < 2 and not _parece_apenas_transmissao(turno_conteudo):
             try:
                 demanda.tipo_demanda = TipoDemanda(dados["tipo_demanda"])
+                # Bloco 30 — proveniência: mesma origem do turno (TEXT/AUDIO/ATTACHMENT)
+                demanda.registrar_proveniencia_fixa(
+                    "tipo_demanda", demanda.tipo_demanda.value, origem, nome_arquivo
+                )
             except ValueError:
                 pass
 
@@ -817,6 +821,13 @@ def aplicar_extracao(demanda: DemandState, dados: dict, turno: int, ultima_pergu
                 pass
         # Limita a 3 classificações — mais que isso indica inferência imprecisa do Qwen
         demanda.classificacao_estrategica = classificacoes[:3]
+        if demanda.classificacao_estrategica:
+            # Bloco 30 — proveniência: mesma origem do turno
+            demanda.registrar_proveniencia_fixa(
+                "classificacao_estrategica",
+                [c.value for c in demanda.classificacao_estrategica],
+                origem, nome_arquivo,
+            )
 
     # perguntas_de_negocio NÃO é preenchido aqui. Bug real observado: o Qwen
     # preenchia esse campo direto a partir do texto livre (turno 1, sem
@@ -974,18 +985,10 @@ def no_avaliar_completude(state: GraphState) -> GraphState:
                 turno=demanda.turno_atual,
             )
 
-    # Verificar dependência de Estruturante
-    # DESATIVADO no Ato 1 — fluxo multi-demanda será trabalhado no Ato 2
-    # A lógica está preservada abaixo, comentada, para reativar no Ato 2.
-    # Bloco 23: a categoria TipoDemanda.ESTRUTURANTE foi removida — se esse
-    # bloco for reativado, revisar DEPENDE_SEMPRE_DE_ESTRUTURANTE/
-    # analise_depende_de_gold em schemas/models.py primeiro (o conceito de
-    # "depende de Estruturante" não existe mais como tipo separado).
-    # precisa_estruturante = (
-    #     demanda.tipo_demanda in DEPENDE_SEMPRE_DE_ESTRUTURANTE
-    #     or (demanda.tipo_demanda == TipoDemanda.ANALISE
-    #         and analise_depende_de_gold(demanda))
-    # )
+    # Fluxo multi-demanda (dependência entre demandas): desativado desde o
+    # Ato 1. Bloco 30 removeu o código comentado que ficava aqui — dependia de
+    # DEPENDE_SEMPRE_DE_ESTRUTURANTE/analise_depende_de_gold, apagados de
+    # schemas/models.py junto com o schema morto. Retomar está no backlog.
 
     vazios = campos_vazios(demanda)
 
@@ -1375,6 +1378,10 @@ def processar_selecao_checkbox(sessao: SessionState, selecoes: List[str]) -> Ses
 
     if classificacoes:
         demanda.classificacao_estrategica = classificacoes
+        # Bloco 30 — escolhido no CheckboxGroup = MANUAL
+        demanda.registrar_proveniencia_fixa(
+            "classificacao_estrategica", [c.value for c in classificacoes], OrigemCampo.MANUAL
+        )
         sessao.demandas[sessao.indice_ativo] = demanda
 
     return sessao
@@ -1390,9 +1397,8 @@ def processar_confirmacao_tipo_demanda(sessao: SessionState, valor_selecionado: 
     scripts/avaliar.py do Ato 3) não conseguia fechar até PRONTA nenhum caso
     que dependesse desse campo, sem passar pela UI Gradio.
 
-    tipo_demanda é um enum "bare" em DemandState — não é wrapeado em
-    FieldProvenance (mesmo padrão de valor_negocio; ver achado de proveniência
-    incompleta em claude/ato3_kickoff.md).
+    tipo_demanda continua um enum "bare" em DemandState; a origem (MANUAL)
+    fica em demanda.proveniencia_campos_fixos (Bloco 30).
     """
     demanda = sessao.demanda_ativa
     if not demanda or not valor_selecionado:
@@ -1402,6 +1408,8 @@ def processar_confirmacao_tipo_demanda(sessao: SessionState, valor_selecionado: 
         demanda.tipo_demanda = TipoDemanda(valor_selecionado)
     except ValueError:
         return sessao
+    # Bloco 30 — escolhido no Radio = MANUAL
+    demanda.registrar_proveniencia_fixa("tipo_demanda", demanda.tipo_demanda.value, OrigemCampo.MANUAL)
 
     sessao.demandas[sessao.indice_ativo] = demanda
     return sessao
@@ -1442,8 +1450,8 @@ def processar_confirmacao_valor_negocio(sessao: SessionState, valor_selecionado:
     (scripts/rodar_casos.py), que roda os casos direto contra o grafo sem
     passar pela UI Gradio.
 
-    valor_negocio é um enum "bare" em DemandState (mesmo padrão de
-    tipo_demanda) — não é wrapeado em FieldProvenance.
+    valor_negocio continua um enum "bare" em DemandState; a origem (MANUAL)
+    fica em demanda.proveniencia_campos_fixos (Bloco 30).
     """
     demanda = sessao.demanda_ativa
     if not demanda or not valor_selecionado:
@@ -1453,6 +1461,8 @@ def processar_confirmacao_valor_negocio(sessao: SessionState, valor_selecionado:
         demanda.valor_negocio = ValorNegocio(valor_selecionado)
     except ValueError:
         return sessao
+    # Bloco 30 — escolhido no Radio = MANUAL
+    demanda.registrar_proveniencia_fixa("valor_negocio", demanda.valor_negocio.value, OrigemCampo.MANUAL)
 
     sessao.demandas[sessao.indice_ativo] = demanda
     return sessao
