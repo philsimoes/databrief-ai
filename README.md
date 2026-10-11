@@ -55,7 +55,7 @@ Bloqueios e link de evidência são opcionais e só entram quando o usuário os 
 
 ---
 
-## Como rodar em cinco passos
+## Como rodar em 5 passos
 
 Funciona num runtime limpo do Colab. Tempo estimado: 5 minutos até a interface abrir.
 
