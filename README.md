@@ -4,7 +4,7 @@ Agente conversacional que transforma um pedido vago de dados ("preciso de um das
 
 Aceita texto, áudio (gravado ou enviado) e anexos (PDF, DOCX, TXT). Roda inteiro no Google Colab gratuito.
 
-**Autor:** Philipe da Silva Simões (Phil) — Coordenador de Dados, Gerência de Inteligência de Dados, YDUQS
+**Autor:** Philipe da Silva Simões — Coordenador de Dados, Gerência de Inteligência de Dados, YDUQS
 **Contexto:** projeto final da pós-graduação em LLM & IA (PUC-Rio), 2026
 **Versão atual:** `v1.0-final` (Ato 4) — ver [Histórico de releases](#histórico-de-releases)
 
@@ -163,7 +163,9 @@ O modo é decidido uma vez, na inicialização, e **nunca troca sozinho**. Se o 
 
 **Por que guardas anti-alucinação.** O modelo preenchia campos sem base no texto (título inventado, tipo de demanda chutado a partir de "segue o anexo"). Cada guarda confere o texto original do usuário, não a resposta do modelo. Exemplo: o resultado esperado só é aceito se o texto contiver uma palavra de formato ("dashboard", "alerta"…).
 
-**Por que o RAG foi removido.** Foi implementado (E5-small + FAISS) e testado com o corpus público da YDUQS. Nos testes, o corpus institucional não ajudava a refinar demandas internas: o que falta numa demanda vaga é informação que só o solicitante tem, não contexto público da empresa. A remoção foi uma decisão documentada, não uma lacuna. Detalhes em `claude/ato2_decisoes.md` (documentos do projeto).
+**Por que o RAG foi testado e removido.** Um pipeline com embeddings E5-small e índice FAISS foi implementado e testado com um corpus real da YDUQS: 54 trechos, sendo 28 páginas da apresentação corporativa e 26 seções do site institucional. A intenção era que o agente conhecesse melhor a empresa para fazer perguntas mais específicas ao solicitante. Na prática, o modelo recuperava os cinco trechos mais parecidos com a demanda e os citava no briefing, em vez de usá-los para perguntar melhor. Em três demandas de teste, uma recebeu uma citação útil; outra, trechos quase repetidos de uma mesma página de gráfico; e a terceira, sobre consumo de energia de data centers, recebeu quatro trechos sem relação com o pedido, apresentados como relevantes.
+
+Com a stack do projeto, o RAG não funcionou bem: um modelo local de 4 bilhões de parâmetros, decidindo sozinho o que era relevante, não teve capacidade para separar o trecho útil do irrelevante. Ao mesmo tempo, o agente já entregava briefings completos sem ele, porque o que falta numa demanda vaga vem das perguntas ao solicitante. Mantê-lo só acrescentaria risco de ruído no briefing, então seguimos sem ele. O código e os testes ficaram preservados no histórico do repositório.
 
 **Por que três tipos de demanda, não quatro.** "Estruturante" (pipeline, tabela Gold) saiu como tipo: na prática sempre servia de base para um Produto de Dados ou uma Alarmística. Continua existindo como classificação estratégica.
 
@@ -175,7 +177,7 @@ O modo é decidido uma vez, na inicialização, e **nunca troca sozinho**. Se o 
 
 **10 casos sintéticos** em `testes/casos_teste.py`, cobrindo 10 categorias de situação: tema sem formato, formato explícito, bloqueio e link, alerta explícito, pergunta de negócio, caso fechado, anexo, ambiguidade, áudio e demanda totalmente vaga. As demandas são inventadas, mas o vocabulário é real da YDUQS (marcas, modalidades, métricas). Cada caso tem respostas previstas por campo e um gabarito final.
 
-O plano original previa 50 casos. Ficamos em 10 por decisão de escopo — ver [Limitações](#limitações).
+O plano inicial previa 50 casos; escolhemos 10 para caber no tempo disponível do projeto, um por categoria. A ampliação está nos [Próximos passos](#próximos-passos).
 
 ### Como foi medido
 
@@ -236,9 +238,8 @@ Os 6 cenários terminam com mensagem clara ao usuário, nenhum com falha silenci
 
 O que **não** foi feito, ou foi simplificado, e por quê:
 
-- **10 casos de teste, não 50.** Escrever cada caso exige texto da demanda, respostas por campo e gabarito — trabalho de autoria, não de código. Os 10 cobrem as 10 categorias planejadas e geraram todas as métricas, mas a amostra é pequena: um único caso muda o F1 em 0,10.
 - **Concordância humana com um único avaliador** (o autor), sem rubrica calibrada nem segundo avaliador.
-- **CPU_LOCAL sem avaliação de qualidade.** Um ciclo completo levaria 60–90 minutos de execução, mais a revisão humana. Só temos a latência.
+- **Avaliação de qualidade do CPU_LOCAL.** Devido ao tempo disponível, a avaliação de qualidade não foi feita nesse modo: um ciclo completo levaria de 60 a 90 minutos de execução, mais a revisão humana. Isso não afeta as conclusões, porque o CPU_LOCAL é a contingência para quando não há GPU. A qualidade foi medida nos dois modos de uso principal, e o CPU_LOCAL rodou os 10 casos de ponta a ponta, sem erro, com a latência medida.
 - **Completude 1,0 é parcialmente efeito do método.** O avaliador fornece respostas previstas para todo campo perguntado, então todo caso chega a "pronto". A métrica mostra que o fluxo fecha, não que um usuário real responderia tudo.
 - **Casos de falha sem teste formal para os cenários de notebook** (GPU e quantização).
 - **Campos específicos por tipo não existem.** Uma Alarmística não registra limite de alerta nem frequência; uma Análise não registra recorte temporal. O schema previsto nunca foi ligado ao grafo e foi removido no Ato 4 para não fingir que existia.
