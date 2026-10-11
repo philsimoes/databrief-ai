@@ -1,6 +1,6 @@
 # ============================================================
 # schemas/models.py
-# DataBrief AI — Bloco 01: Schemas Pydantic
+# DataBrief AI — Bloco 01: Schemas Pydantic (revisado no Bloco 30)
 # ============================================================
 
 from __future__ import annotations
@@ -110,15 +110,13 @@ class CamadaRAG(str, Enum):
 
 # ────────────────────────────────────────────────────────────
 # DEPENDÊNCIAS ENTRE TIPOS DE DEMANDA
-# Legado do Ato 1/2, já DESATIVADO desde então (fluxo multi-demanda nunca foi
-# ligado — ver comentário em no_avaliar_completude, graph/agent.py). Bloco 23
-# removeu o tipo "Estruturante" (ver TipoDemanda acima), então a ordenação
-# abaixo perdeu o motivo original de existir (não há mais um tipo que precisa
-# "rodar antes" dos outros) — mantida só porque ordenar_demandas() ainda é
-# chamada por SessionState.adicionar_demanda(); DEPENDE_SEMPRE_DE_ESTRUTURANTE
-# e analise_depende_de_gold() ficam sem uso prático hoje, não removidos agora
-# pra não mexer no fluxo multi-demanda antes da hora (fora do escopo do
-# Bloco 23). Reavaliar quando o Ato 2 retomar multi-demanda de verdade.
+# Legado do Ato 1/2, DESATIVADO desde então (fluxo multi-demanda nunca foi
+# ligado — ver comentário em no_avaliar_completude, graph/agent.py).
+# Bloco 30 — removidos DEPENDE_SEMPRE_DE_ESTRUTURANTE, FONTES_GOLD e
+# analise_depende_de_gold(): dependiam do tipo "Estruturante" (removido no
+# Bloco 23) e de CamposAnalise.fonte_dados (schema morto, removido abaixo).
+# Fica só a ordenação simples, porque SessionState.adicionar_demanda() ainda
+# chama ordenar_demandas(). Retomar multi-demanda está no backlog.
 # ────────────────────────────────────────────────────────────
 
 ORDEM_RESOLUCAO: Dict[TipoDemanda, int] = {
@@ -127,27 +125,9 @@ ORDEM_RESOLUCAO: Dict[TipoDemanda, int] = {
     TipoDemanda.ALARMASTICA:   2,
 }
 
-DEPENDE_SEMPRE_DE_ESTRUTURANTE = {
-    TipoDemanda.PRODUTO_DADOS,
-    TipoDemanda.ALARMASTICA,
-}
-
-FONTES_GOLD = {"gold", "Gold", "GOLD"}
-
-
-def analise_depende_de_gold(demanda: "DemandState") -> bool:
-    if demanda.campos_analise and demanda.campos_analise.fonte_dados:
-        fonte = str(demanda.campos_analise.fonte_dados.valor)
-        return any(g in fonte for g in FONTES_GOLD)
-    return False
-
 
 def ordenar_demandas(demandas: List["DemandState"]) -> List["DemandState"]:
-    def chave(d: "DemandState") -> int:
-        if d.tipo_demanda == TipoDemanda.ANALISE and analise_depende_de_gold(d):
-            return 2
-        return ORDEM_RESOLUCAO.get(d.tipo_demanda, 99)
-    return sorted(demandas, key=chave)
+    return sorted(demandas, key=lambda d: ORDEM_RESOLUCAO.get(d.tipo_demanda, 99))
 
 # ────────────────────────────────────────────────────────────
 # FIELD PROVENANCE
@@ -204,40 +184,13 @@ class TurnInput(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────
-# CAMPOS ESPECÍFICOS POR TIPO DE DEMANDA
+# CAMPOS ESPECÍFICOS POR TIPO DE DEMANDA — removidos no Bloco 30
+# CamposAnalise / CamposEstruturante / CamposProdutoDados / CamposAlarmastica
+# existiam desde o Ato 1, mas o grafo nunca leu nem escreveu nenhum deles
+# (achado do Ato 3). Readiness e completude sempre dependeram só dos 7 campos
+# universais. Extração de campos por tipo (ex.: threshold de Alarmística)
+# está no backlog — ver README, "Próximos passos".
 # ────────────────────────────────────────────────────────────
-
-class CamposAnalise(BaseModel):
-    """Campos obrigatórios para demandas do tipo Análise."""
-    recorte_temporal: Optional[FieldProvenance] = None   # ex: "últimos 6 meses"
-    estratificacoes: Optional[FieldProvenance] = None    # ex: "por curso, marca, polo"
-    fonte_dados: Optional[FieldProvenance] = None        # ex: "Silver matrícula"
-    metrica_principal: Optional[FieldProvenance] = None  # ex: "taxa de evasão"
-
-
-class CamposEstruturante(BaseModel):
-    """Campos obrigatórios para demandas do tipo Estruturante."""
-    camada_origem: Optional[FieldProvenance] = None      # ex: "Silver"
-    camada_destino: Optional[FieldProvenance] = None     # ex: "Gold"
-    fonte_dados: Optional[FieldProvenance] = None
-    frequencia_atualizacao: Optional[FieldProvenance] = None  # ex: "diária"
-
-
-class CamposProdutoDados(BaseModel):
-    """Campos obrigatórios para demandas do tipo Produto de Dados."""
-    ferramenta: Optional[FieldProvenance] = None         # ex: "PowerBI", "Databricks AIBI", "Agente"
-    publico_alvo: Optional[FieldProvenance] = None       # ex: "diretoria comercial"
-    fonte_dados: Optional[FieldProvenance] = None
-    frequencia_atualizacao: Optional[FieldProvenance] = None
-
-
-class CamposAlarmastica(BaseModel):
-    """Campos obrigatórios para demandas do tipo Alarmística."""
-    indicador_monitorado: Optional[FieldProvenance] = None   # ex: "taxa de sucesso de captura"
-    threshold_alerta: Optional[FieldProvenance] = None       # ex: "abaixo de 85%"
-    frequencia_verificacao: Optional[FieldProvenance] = None # ex: "a cada 6 horas"
-    destinatarios_email: Optional[FieldProvenance] = None    # ex: ["phil@yduqs.com.br"]
-
 
 # ────────────────────────────────────────────────────────────
 # DEMAND STATE
@@ -247,7 +200,8 @@ class CamposAlarmastica(BaseModel):
 class DemandState(BaseModel):
     """
     Estado completo de uma demanda.
-    Todos os campos rastreiam proveniência individual.
+    Todos os campos rastreiam proveniência individual: os de texto livre via
+    FieldProvenance direto; os 3 de opção fixa via proveniencia_campos_fixos.
     Atualizado a cada turno; nunca substituído, apenas acumulado.
     """
     # Identificação
@@ -272,11 +226,14 @@ class DemandState(BaseModel):
                                                        # aprovação; reaproveitado pelo
                                                        # TTS (Piper) após aprovar
 
-    # Campos específicos por tipo (apenas um será populado)
-    campos_analise:       Optional[CamposAnalise]      = None
-    campos_estruturante:  Optional[CamposEstruturante] = None
-    campos_produto_dados: Optional[CamposProdutoDados] = None
-    campos_alarmastica:   Optional[CamposAlarmastica]  = None
+    # Bloco 30 — proveniência dos 3 campos de opção fixa (tipo_demanda,
+    # valor_negocio, classificacao_estrategica). Esses campos continuam
+    # guardando o valor cru (enum/lista de enum) porque muita lógica compara
+    # direto (ex.: demanda.tipo_demanda == TipoDemanda.ANALISE) — trocar o
+    # tipo deles pra FieldProvenance mexeria em agent.py, app.py e nos dois
+    # scripts de avaliação. Em vez disso, a origem fica registrada aqui ao
+    # lado, chave = nome do campo. Escrita só via registrar_proveniencia_fixa().
+    proveniencia_campos_fixos: Dict[str, FieldProvenance] = Field(default_factory=dict)
 
     # Estado do agente
     readiness:      ReadinessStatus = ReadinessStatus.DISCOVERY
@@ -320,10 +277,20 @@ class DemandState(BaseModel):
         self.turno_atual += 1
         self.updated_at = datetime.now()
 
+    def registrar_proveniencia_fixa(
+        self, campo: str, valor: Any, origem: OrigemCampo,
+        arquivo: Optional[str] = None,
+    ) -> None:
+        """Bloco 30 — registra de onde veio tipo_demanda / valor_negocio /
+        classificacao_estrategica. Sempre chamada no mesmo lugar em que o
+        valor cru do campo é gravado, pra os dois nunca divergirem."""
+        self.proveniencia_campos_fixos[campo] = FieldProvenance(
+            valor=valor, origem=origem, turno=self.turno_atual, arquivo=arquivo,
+        )
+
     def campos_obrigatorios_preenchidos(self) -> bool:
         """
         Verifica se os campos universais obrigatórios estão presentes.
-        Campos específicos por tipo são verificados separadamente.
         """
         universais = [
             self.titulo,
@@ -479,6 +446,14 @@ class BriefingOutput(BaseModel):
         for campo in ["titulo", "objetivo", "resultado_esperado", "bloqueios",
                       "link_evidencia"]:
             fp = getattr(state, campo, None)
+            if fp:
+                prov[campo] = fp
+        # Bloco 30 — perguntas_de_negocio e os 3 campos de opção fixa também
+        # entram na proveniência exportada (antes ficavam de fora do JSON).
+        if state.perguntas_de_negocio:
+            prov["perguntas_de_negocio"] = state.perguntas_de_negocio[0]
+        for campo in ["tipo_demanda", "valor_negocio", "classificacao_estrategica"]:
+            fp = state.proveniencia_campos_fixos.get(campo)
             if fp:
                 prov[campo] = fp
 
