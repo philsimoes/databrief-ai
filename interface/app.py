@@ -3,6 +3,8 @@
 # DataBrief AI — Interface Gradio
 # Chat centralizado + CheckboxGroup para classificacao_estrategica
 # + entrada de áudio (microfone/upload) com transcrição revisável
+# + (Bloco 31) aviso de link público, rótulo de IA, edição de título/objetivo
+#   antes de aprovar, botão "Novo caso" que limpa a tela inteira
 # Gradio 5.x / 6.x compatível
 # ===========================================================
 
@@ -10,7 +12,8 @@ import gradio as gr
 import json
 from schemas.models import (
     SessionState, DemandState, ModoExecucao,
-    ReadinessStatus, TipoDemanda, ClassificacaoEstrategica, TipoInput
+    ReadinessStatus, TipoDemanda, ClassificacaoEstrategica, TipoInput,
+    FieldProvenance, OrigemCampo,
 )
 from graph.agent import (
     processar_turno, processar_selecao_checkbox,
@@ -83,6 +86,36 @@ OPCOES_VALOR_NEGOCIO = [
     ("Tático — médio prazo", "Tático"),
     ("Estratégico — direcionamento do negócio", "Estratégico"),
 ]
+
+# ────────────────────────────────────────────────────────────
+# AVISOS FIXOS (Bloco 31) — transparência de IA e link público
+# ────────────────────────────────────────────────────────────
+
+AVISO_LINK_PUBLICO = (
+    "**Atenção:** este link do Gradio é **temporário e público** — qualquer "
+    "pessoa com o endereço acessa esta sessão enquanto o Colab estiver "
+    "rodando. Use só dados fictícios; não cole dados pessoais de alunos ou "
+    "informação interna sensível."
+)
+
+ROTULOS_MODO = {
+    ModoExecucao.GPU_LOCAL: "GPU Local (Qwen3-4B)",
+    ModoExecucao.CPU_LOCAL: "CPU Local (Qwen3-1.7B)",
+    ModoExecucao.OPENAI:    "OpenAI (gpt-4o-mini)",
+}
+
+
+def texto_aviso_ia(modo: ModoExecucao) -> str:
+    """Rótulo de IA usado no briefing (tela e JSON exportado)."""
+    return (
+        f"Conteúdo estruturado com apoio de IA ({ROTULOS_MODO.get(modo, modo.value)}) "
+        "e revisado por um humano antes da aprovação. A origem de cada campo "
+        "está indicada no painel e em _metadata.proveniencia."
+    )
+
+
+ROTULO_AUDIO_IA = "Resumo em áudio — voz sintética gerada por IA (Piper TTS)"
+
 
 # ────────────────────────────────────────────────────────────
 # ESTADO GLOBAL DA SESSÃO
@@ -159,7 +192,10 @@ def _bloco_briefing(demanda) -> str:
                 "AUDIO":      "áudio",
                 "ATTACHMENT": "anexo",
                 "RAG":        "base de conhecimento",
-                "RULE":       "inferido pelo Qwen3-4B",
+                # Bloco 31 — era "inferido pelo Qwen3-4B", errado nos modos
+                # CPU_LOCAL/OPENAI e nas regras determinísticas (Análise/
+                # Alarmística), que nem chamam modelo nenhum.
+                "RULE":       "inferido pelo sistema",
                 "MANUAL":     "selecionado",
             }
             cor_origem = {
@@ -210,10 +246,29 @@ def _bloco_briefing(demanda) -> str:
             <div style="display:flex;flex-wrap:wrap;gap:4px;">{items}</div>
         </div>"""
 
+    # Bloco 30 — os 3 campos de opção fixa agora mostram origem também
+    # (antes: classificação sem badge, valor sem badge, tipo nem aparecia
+    # como linha — só no subtítulo do card).
+    prov_fixa = demanda.proveniencia_campos_fixos
+
+    def fixa_linha(label, campo, valor_txt):
+        fp = prov_fixa.get(campo)
+        return campo_linha(label, valor_txt,
+                           fp.origem.value if fp else None,
+                           fp.turno if fp else None)
+
+    tipo_html = fixa_linha(
+        "Tipo de demanda", "tipo_demanda",
+        demanda.tipo_demanda.value if demanda.tipo_demanda else None,
+    )
+    valor_html = fixa_linha(
+        "Valor de negócio", "valor_negocio",
+        demanda.valor_negocio.value if demanda.valor_negocio else None,
+    )
     classificacoes = ""
     if demanda.classificacao_estrategica:
         vals = ", ".join(c.value for c in demanda.classificacao_estrategica)
-        classificacoes = campo_linha("Classificação estratégica", vals)
+        classificacoes = fixa_linha("Classificação estratégica", "classificacao_estrategica", vals)
 
     perguntas_html = ""
     if demanda.perguntas_de_negocio:
@@ -240,13 +295,17 @@ def _bloco_briefing(demanda) -> str:
         <div style="border-top:1px solid #f3f4f6;padding-top:4px;">
             {fp_linha("Título", demanda.titulo)}
             {fp_linha("Objetivo", demanda.objetivo)}
+            {tipo_html}
             {fp_linha("Resultado esperado", demanda.resultado_esperado)}
-            {campo_linha("Valor de negócio", demanda.valor_negocio.value if demanda.valor_negocio else None)}
+            {valor_html}
             {classificacoes}
             {perguntas_html}
             {fp_linha("Bloqueios", demanda.bloqueios)}
         </div>
         {pendencias_html}
+        <div style="margin-top:14px;font-size:11px;color:#6b7280;">
+            {texto_aviso_ia(obter_modo_ativo())}
+        </div>
     </div>"""
 
 
@@ -600,18 +659,74 @@ def confirmar_pergunta_negocio(texto, sessao_state, historico):
     )
 
 
-def aprovar_briefing(sessao_state):
+def abrir_edicao(sessao_state):
+    """Bloco 31 — abre os campos de edição de título/objetivo já preenchidos
+    com os valores atuais. O título é gerado pelo sistema (RULE, Bloco 22) e
+    foi o principal motivo da concordância humana de 0,704 no GPU_LOCAL
+    (títulos vagos) — editar antes de aprovar é a rede de segurança."""
     if not sessao_state:
-        return None, gr.update(visible=False), "Nenhum briefing para aprovar.", gr.update(visible=False)
+        return gr.update(visible=False), "", ""
+    demanda = SessionState.model_validate(sessao_state).demanda_ativa
+    titulo = demanda.titulo.valor if demanda and demanda.titulo else ""
+    objetivo = demanda.objetivo.valor if demanda and demanda.objetivo else ""
+    return gr.update(visible=True), titulo, objetivo
+
+
+def _aplicar_edicao(demanda, campo: str, texto: str) -> None:
+    """Grava a edição como MANUAL só se o texto realmente mudou."""
+    texto = (texto or "").strip()
+    atual = getattr(demanda, campo)
+    if texto and (atual is None or str(atual.valor).strip() != texto):
+        setattr(demanda, campo, FieldProvenance(
+            valor=texto, origem=OrigemCampo.MANUAL, turno=demanda.turno_atual,
+        ))
+
+
+def aprovar_briefing(sessao_state, titulo_editado="", objetivo_editado=""):
+    _sem = (None, gr.update(visible=False), "Nenhum briefing para aprovar.",
+            gr.update(visible=False), sessao_state, gr.update(), gr.update(visible=False))
+    if not sessao_state:
+        return _sem
     sessao  = SessionState.model_validate(sessao_state)
     demanda = sessao.demanda_ativa
+    if not demanda:
+        return _sem
     from schemas.models import BriefingOutput
+
+    # Bloco 31 — edições do humano entram antes de montar o briefing
+    _aplicar_edicao(demanda, "titulo", titulo_editado)
+    _aplicar_edicao(demanda, "objetivo", objetivo_editado)
+    # Análise: resultado_esperado é "Análise: {objetivo}" (regra) — se o
+    # objetivo foi editado, a regra é reaplicada pra os dois não divergirem.
+    if (
+        demanda.tipo_demanda == TipoDemanda.ANALISE
+        and demanda.objetivo and demanda.objetivo.origem == OrigemCampo.MANUAL
+        and demanda.resultado_esperado and demanda.resultado_esperado.origem == OrigemCampo.RULE
+    ):
+        demanda.resultado_esperado = FieldProvenance(
+            valor=f"Análise: {demanda.objetivo.valor}",
+            origem=OrigemCampo.RULE, turno=demanda.turno_atual,
+        )
+
+    # Bloco 31 — aprovar = confirmar: marca confirmado=True em toda
+    # proveniência (o campo existia no schema desde o Ato 1, nunca era usado)
+    for campo in ["titulo", "objetivo", "resultado_esperado", "bloqueios", "link_evidencia"]:
+        fp = getattr(demanda, campo)
+        if fp:
+            fp.confirmado = True
+    for fp in demanda.perguntas_de_negocio:
+        fp.confirmado = True
+    for fp in demanda.proveniencia_campos_fixos.values():
+        fp.confirmado = True
+    sessao.demandas[sessao.indice_ativo] = demanda
+
     # uso_openai só faz sentido no modo OPENAI — pedido do Phil (12/09) pra
     # deixar isso visível no próprio JSON baixado, não só no print do console.
     uso_openai = obter_uso_openai() if sessao.modo_execucao == ModoExecucao.OPENAI else None
     briefing = BriefingOutput.from_demand_state(demanda, sessao.modo_execucao, uso_openai=uso_openai)
     dados = briefing.to_sharepoint_dict()
     dados["_metadata"] = {
+        "aviso_ia":      texto_aviso_ia(briefing.modo_execucao),
         "id_demanda":    briefing.id_demanda,
         "sessao_id":     briefing.sessao_id,
         "completude":    briefing.completude,
@@ -619,7 +734,8 @@ def aprovar_briefing(sessao_state):
         "modo_execucao": briefing.modo_execucao.value,
         "uso_openai":    briefing.uso_openai,
         "proveniencia":  {
-            k: {"origem": v.origem.value, "turno": v.turno, "arquivo": v.arquivo}
+            k: {"origem": v.origem.value, "turno": v.turno, "arquivo": v.arquivo,
+                "confirmado": v.confirmado}
             for k, v in briefing.proveniencia.items()
         },
     }
@@ -628,7 +744,12 @@ def aprovar_briefing(sessao_state):
         json.dump(dados, f, ensure_ascii=False, indent=2)
     # Botão "Ouvir resumo" (TTS) só aparece depois da aprovação explícita —
     # Piper nunca carrega antes disso (fluxo de aprovação humana do projeto).
-    return caminho, gr.update(visible=True), "Briefing aprovado. Faça o download abaixo.", gr.update(visible=True)
+    return (
+        caminho, gr.update(visible=True), "Briefing aprovado. Faça o download abaixo.",
+        gr.update(visible=True), sessao.model_dump(mode="json"),
+        _bloco_briefing(demanda),           # re-renderiza com os badges MANUAL
+        gr.update(visible=False),           # fecha a seção de edição
+    )
 
 
 def gerar_audio_resumo(sessao_state):
@@ -657,15 +778,30 @@ def gerar_audio_resumo(sessao_state):
 
 
 def reiniciar(historico, sessao_state):
+    """Botão "Novo caso" — limpa estado E tela sem reiniciar o servidor.
+    Bloco 31: antes só limpava parte da tela — se um Radio (tipo, resultado,
+    valor), a revisão de transcrição/anexo ou uma mensagem de erro estivesse
+    aberta, continuava aberta no caso novo. A ordem desta tupla tem que bater
+    com a lista outputs= de btn_reiniciar.click em construir_interface()."""
     sessao_limpa = nova_sessao()
+    oculto = gr.update(visible=False)
     return (
         [], sessao_limpa.model_dump(mode="json"),
         _barra_html(0, "Aguardando demanda"), "",
-        gr.update(visible=False), gr.update(visible=False),
-        gr.update(visible=False), gr.update(visible=False),
-        gr.update(value=[]), "",
-        gr.update(visible=False), gr.update(value=None, visible=False), "",
-        gr.update(visible=False), gr.update(value=""),
+        oculto, oculto,                                  # secao_briefing, btn_aprovar
+        gr.update(value=None, visible=False),            # arquivo_download
+        oculto, gr.update(value=[]),                     # checkbox
+        "",                                              # status_aprovacao
+        oculto, gr.update(value=None, visible=False), "",# TTS
+        oculto, gr.update(value=""),                     # sugestão de pergunta
+        oculto, gr.update(value=None),                   # radio tipo
+        oculto, gr.update(value=None),                   # radio resultado
+        oculto, gr.update(value=None),                   # radio valor
+        oculto, gr.update(value=""), gr.update(value=None),  # transcrição + áudio
+        oculto, gr.update(value=""), gr.update(value=None),  # anexo
+        "", "", "",                                      # status_entrada, nome_arquivo, texto_anexo_pendente
+        oculto, gr.update(value=""), gr.update(value=""),    # edição título/objetivo
+        gr.update(value=""),                             # msg_input
     )
 
 
@@ -802,12 +938,10 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 # dropdown editável aqui só mudava um metadado, nunca o
                 # modelo de verdade — exatamente o tipo de "fallback
                 # silencioso" que o projeto proíbe.
-                _ROTULOS_MODO_UI = {
-                    ModoExecucao.GPU_LOCAL: "GPU Local (Qwen3-4B)",
-                    ModoExecucao.CPU_LOCAL: "CPU Local (Qwen3-1.7B)",
-                    ModoExecucao.OPENAI:    "OpenAI (gpt-4o-mini)",
-                }
-                gr.Markdown(f"**Modo ativo:** {_ROTULOS_MODO_UI[obter_modo_ativo()]}")
+                gr.Markdown(f"**Modo ativo:** {ROTULOS_MODO[obter_modo_ativo()]}")
+
+        # Bloco 31 — aviso fixo de link temporário e público
+        gr.Markdown(AVISO_LINK_PUBLICO)
 
         gr.HTML("<hr style='margin:4px 0 0 0;border:none;border-top:1px solid #e5e7eb;'>")
 
@@ -913,7 +1047,9 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 show_label=False, lines=1, max_lines=4, submit_btn=True,
             )
 
-            btn_reiniciar = gr.Button("Nova demanda", size="sm", variant="secondary")
+            btn_reiniciar = gr.Button(
+                "Novo caso (limpa tudo)", size="sm", variant="secondary"
+            )
 
             # ── Entrada de áudio — microfone/upload + transcrição revisável ──
             with gr.Row():
@@ -962,6 +1098,17 @@ def construir_interface(agente_compilado) -> gr.Blocks:
         # ── Briefing final ────────────────────────────────────
         with gr.Column(elem_classes=["chat-container"], visible=False) as secao_briefing:
             briefing_html = gr.HTML(value="")
+
+            # ── Bloco 31 — edição antes de aprovar ────────────
+            btn_editar = gr.Button("Editar título / objetivo", size="sm", variant="secondary")
+            with gr.Column(visible=False) as secao_edicao:
+                gr.Markdown(
+                    "**Corrija o que precisar e clique em Aprovar** — campo "
+                    "alterado aparece como *selecionado* (MANUAL) no briefing:"
+                )
+                editor_titulo = gr.Textbox(label="Título", lines=1)
+                editor_objetivo = gr.Textbox(label="Objetivo", lines=3)
+
             btn_aprovar = gr.Button(
                 "Aprovar e baixar briefing", variant="primary", size="lg", visible=False
             )
@@ -975,7 +1122,7 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 "🔊 Ouvir resumo", size="sm", variant="secondary", visible=False
             )
             audio_resumo = gr.Audio(
-                label="Resumo em áudio", visible=False, autoplay=True
+                label=ROTULO_AUDIO_IA, visible=False, autoplay=True
             )
             status_tts = gr.Markdown("")
 
@@ -1141,10 +1288,19 @@ def construir_interface(agente_compilado) -> gr.Blocks:
             ],
         )
 
+        btn_editar.click(
+            fn=abrir_edicao,
+            inputs=[sessao_state],
+            outputs=[secao_edicao, editor_titulo, editor_objetivo],
+        )
+
         btn_aprovar.click(
             fn=aprovar_briefing,
-            inputs=[sessao_state],
-            outputs=[arquivo_download, arquivo_download, status_aprovacao, btn_ouvir_resumo],
+            inputs=[sessao_state, editor_titulo, editor_objetivo],
+            outputs=[
+                arquivo_download, arquivo_download, status_aprovacao, btn_ouvir_resumo,
+                sessao_state, briefing_html, secao_edicao,
+            ],
         )
 
         btn_ouvir_resumo.click(
@@ -1162,6 +1318,15 @@ def construir_interface(agente_compilado) -> gr.Blocks:
                 secao_checkbox, checkbox_classificacao, status_aprovacao,
                 btn_ouvir_resumo, audio_resumo, status_tts,
                 secao_sugestao_pergunta, editor_pergunta_negocio,
+                # Bloco 31 — tudo que antes ficava aberto entre um caso e outro
+                secao_radio_tipo, radio_tipo,
+                secao_radio_resultado, radio_resultado,
+                secao_radio_valor, radio_valor_negocio,
+                secao_transcricao, editor_transcricao, audio_input,
+                secao_anexo, editor_anexo, anexo_input,
+                status_entrada, nome_arquivo_state, texto_anexo_pendente_state,
+                secao_edicao, editor_titulo, editor_objetivo,
+                msg_input,
             ],
         )
 
