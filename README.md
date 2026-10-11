@@ -9,7 +9,7 @@ Trabalho apresentado ao curso [GenAI e LLM MASTER](https://ica.ele.puc-rio.br/cu
 
 - [Link para o código](notebooks/DataBrief_AI.ipynb).
 
-- [Link para a monografia](docs/texto_academico.pdf).
+- [Link para a monografia](docs/DataBrief_AI_Texto_Academico.pdf).
 
 ---
 
@@ -296,7 +296,7 @@ databrief-ai/
 │   └── avaliacoes/            # relatórios, vereditos e resultados finais
 ├── notebooks/DataBrief_AI.ipynb
 ├── docs/
-│   ├── texto_academico.pdf    # monografia
+│   ├── DataBrief_AI_Texto_Academico.pdf  # monografia
 │   └── demo/                  # arquivos de exemplo para testar
 └── requirements.txt
 ```
