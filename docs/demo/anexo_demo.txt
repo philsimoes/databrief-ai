@@ -1,0 +1,6 @@
+Briefing recebido do time comercial do Ibmec (exemplo fictício para demonstração)
+
+Precisamos entender por que a renovação de matrícula dos alunos de graduação
+do Ibmec em São Paulo caiu no último semestre, comparando com Rio e Brasília.
+A ideia é cruzar renovação com ticket médio e com o curso do aluno, para a
+diretoria comercial decidir onde concentrar ações de retenção no próximo ciclo.
