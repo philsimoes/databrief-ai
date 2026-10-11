@@ -6,14 +6,14 @@ Aceita texto, áudio (gravado ou enviado) e anexos (PDF, DOCX, TXT). Roda inteir
 
 **Autor:** Philipe da Silva Simões (Phil) — Coordenador de Dados, Gerência de Inteligência de Dados, YDUQS
 **Contexto:** projeto final da pós-graduação em LLM & IA (PUC-Rio), 2026
-**Versão atual:** `v0.8-docs` (Ato 4) — ver [Histórico de releases](#histórico-de-releases)
+**Versão atual:** `v1.0-final` (Ato 4) — ver [Histórico de releases](#histórico-de-releases)
 
 ---
 
 ## Sumário
 
 1. [O problema](#o-problema)
-2. [Demo mínima em 5 passos](#demo-mínima-em-5-passos)
+2. [Como rodar em 5 passos](#como-rodar-em-5-passos)
 3. [Como funciona](#como-funciona)
 4. [Arquitetura](#arquitetura)
 5. [Decisões técnicas](#decisões-técnicas)
@@ -55,7 +55,7 @@ Bloqueios e link de evidência são opcionais e só entram quando o usuário os 
 
 ---
 
-## Demo mínima em 5 passos
+## Como rodar em 5 passos
 
 Funciona num runtime limpo do Colab. Tempo estimado: 5 minutos até a interface abrir.
 
@@ -69,6 +69,8 @@ Funciona num runtime limpo do Colab. Tempo estimado: 5 minutos até a interface 
    > *Preciso acompanhar a evolução da taxa de evasão do Digital mês a mês.*
 
    Responda às perguntas, revise o briefing, clique em **Aprovar e baixar briefing**.
+
+**Para testar anexo e tratamento de erro:** a pasta [`docs/demo/`](docs/demo/) tem dois arquivos de exemplo. Envie `anexo_demo.txt` no campo de anexo para ver a extração com origem *anexo*. Envie `anexo_corrompido.pdf`, quebrado de propósito, para ver a mensagem de erro em vez de uma falha silenciosa.
 
 > **Trocar de modo no meio da sessão:** mude `MODO_EXECUCAO` na Célula 1 e rode **todas** as células de novo. Só mudar a variável não basta — quem registra o modo ativo é a Célula 3.
 
@@ -151,7 +153,7 @@ flowchart TD
 
 | Modo | LLM | ASR | Para quê |
 |---|---|---|---|
-| `GPU_LOCAL` | Qwen3-4B-Instruct, 4-bit | Whisper Small | Modo principal e de demo |
+| `GPU_LOCAL` | Qwen3-4B-Instruct, 4-bit | Whisper Small | Modo principal |
 | `CPU_LOCAL` | Qwen3-1.7B, bf16 | Whisper Tiny | Contingência sem GPU |
 | `OPENAI` | gpt-4o-mini via API | Whisper local | Alternativo, com chave institucional |
 
@@ -313,9 +315,7 @@ databrief-ai/
 │   ├── execucoes/             # baselines de latência por modo
 │   └── avaliacoes/            # relatórios, vereditos e resultados finais
 ├── notebooks/DataBrief_AI.ipynb
-├── docs/
-│   ├── roteiro_demo.md        # roteiro de 9 cenas + Plano B
-│   └── demo/                  # anexos usados na demo (inclui um PDF quebrado de propósito)
+├── docs/demo/                 # arquivos de exemplo para testar (inclui um PDF quebrado de propósito)
 └── requirements.txt
 ```
 
@@ -328,9 +328,7 @@ databrief-ai/
 | `v0.1-texto` | Ato 1 — schemas, grafo LangGraph só com texto, Gradio básico, briefing aprovável |
 | `v0.2-ato2` | Ato 2 — Whisper com revisão de transcrição, anexos, proveniência por origem, Piper TTS; RAG implementado, testado e removido |
 | `v0.3-ato3` | Ato 3 — 3 modos selecionáveis sem fallback silencioso, 10 casos, script com 8 métricas, veredito humano, 2 casos de falha corrigidos |
-| `v0.7-interface` | Ato 4 — proveniência dos 3 campos de opção fixa, schema morto removido, edição de título/objetivo antes de aprovar, aviso de link público, rótulo de IA, "Novo caso" que limpa a tela inteira, suíte pytest |
-| `v0.8-docs` | Ato 4 — README, texto acadêmico, roteiro de demo |
-| `v1.0-final` | Após ensaio bem-sucedido da demo |
+| `v1.0-final` | Ato 4 — proveniência dos 3 campos de opção fixa, schema morto removido, edição de título/objetivo antes de aprovar, aviso de link público, rótulo de IA, "Novo caso" que limpa a tela inteira, 17 testes automáticos, README completo |
 
 ---
 
